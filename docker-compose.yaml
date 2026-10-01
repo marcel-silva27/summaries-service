@@ -1,0 +1,33 @@
+services:
+  summaries:
+    build: .
+    ports:
+      - "8004:8000"
+    volumes:
+      - ./app:/app/app
+    env_file: .env.example
+    environment:
+      MONGODB_URL: mongodb://summaries-mongodb:27017
+      BROKER_URL: amqp://summaries-rabbitmq:5672
+    depends_on:
+      - summaries-mongodb
+      - summaries-rabbitmq
+    networks: [microsvcs]
+
+  summaries-mongodb:
+    image: mongo:7
+    volumes: [summaries-data:/data/db]
+    networks: [microsvcs]
+
+  # Los puertos no se publican al host para no chocar con otros brokers locales.
+  summaries-rabbitmq:
+    image: rabbitmq:4-management-alpine
+    networks: [microsvcs]
+
+volumes:
+  summaries-data:
+
+networks:
+  microsvcs:
+    name: microsvcs
+    external: true
