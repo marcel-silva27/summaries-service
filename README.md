@@ -12,12 +12,15 @@ Las cuatro rutas de summaries ya funcionan. POST valida referencias y devuelve `
 
 Decisiones en [`CLAUDE.md`](./CLAUDE.md). Conceptos, contratos y detalles reunidos en [`docs/REFERENCIA.md`](./docs/REFERENCIA.md).
 
+Guía paso a paso para ejecutar el entorno y probar el avance desde PowerShell: [`INSTRUCCIONES.md`](./INSTRUCCIONES.md).
+
 ## Estructura
 
 ```text
 summaries-service/
 ├── CLAUDE.md                 # Dominio, contratos y decisiones vigentes
 ├── README.md                 # Ejecución, pruebas y próximos pasos
+├── INSTRUCCIONES.md          # Guía práctica de ejecución y pruebas en PowerShell
 ├── docs/REFERENCIA.md        # Glosario y referencia técnica global
 ├── docker-compose.yaml       # Servicio, Mongo y RabbitMQ con volúmenes propios
 ├── compose.test.yaml         # Pruebas aisladas con MongoDB 7 y RabbitMQ reales
