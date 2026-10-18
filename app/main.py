@@ -3,19 +3,39 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from pymongo import MongoClient
+from starlette.concurrency import run_in_threadpool
 
 from . import config
+from .clients.core_client import CoreClient
 from .errors import register_handlers
-from .events import events
+from .events import EventBroker, list_events as event_snapshot
 from .routes import summaries
+from .repository import MongoRepository
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.mongo = MongoClient(config.MONGODB_URL)
-    # TODO (paso 6/7): lanzar consumidores de chat.message.created y summary.requested.
-    yield
-    app.state.mongo.close()
+    client = MongoClient(config.MONGODB_URL, tz_aware=True,
+                         serverSelectionTimeoutMS=config.MONGODB_TIMEOUT_MS,
+                         connectTimeoutMS=config.MONGODB_TIMEOUT_MS,
+                         socketTimeoutMS=config.MONGODB_TIMEOUT_MS)
+    app.state.mongo = client
+    try:
+        await run_in_threadpool(client.admin.command, "ping")
+        repository = MongoRepository(client[config.MONGODB_DATABASE])
+        await run_in_threadpool(repository.ensure_indexes)
+        app.state.repository = repository
+        with CoreClient() as core_client:
+            app.state.core_client = core_client
+            broker = EventBroker(repository)
+            app.state.broker = broker
+            broker.start()
+            try:
+                yield
+            finally:
+                await run_in_threadpool(broker.stop)
+    finally:
+        client.close()
 
 
 app = FastAPI(
@@ -36,4 +56,4 @@ def health():
 
 @app.get("/api/v1/events", tags=["events"])
 def list_events():
-    return events
+    return event_snapshot()

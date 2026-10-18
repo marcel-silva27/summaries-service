@@ -1,6 +1,7 @@
 services:
   summaries:
     build: .
+    stop_grace_period: 20s
     ports:
       - "8004:8000"
     volumes:
@@ -8,24 +9,40 @@ services:
     env_file: .env.example
     environment:
       MONGODB_URL: mongodb://summaries-mongodb:27017
-      BROKER_URL: amqp://summaries-rabbitmq:5672
+      BROKER_URL: ${BROKER_URL:-amqp://summaries-rabbitmq:5672}
     depends_on:
-      - summaries-mongodb
-      - summaries-rabbitmq
+      summaries-mongodb:
+        condition: service_healthy
+      summaries-rabbitmq:
+        condition: service_healthy
     networks: [microsvcs]
 
   summaries-mongodb:
     image: mongo:7
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
     volumes: [summaries-data:/data/db]
     networks: [microsvcs]
 
   # Los puertos no se publican al host para no chocar con otros brokers locales.
   summaries-rabbitmq:
     image: rabbitmq:4-management-alpine
+    hostname: summaries-rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    volumes: [summaries-rabbitmq-data:/var/lib/rabbitmq]
     networks: [microsvcs]
 
 volumes:
   summaries-data:
+  summaries-rabbitmq-data:
 
 networks:
   microsvcs:
