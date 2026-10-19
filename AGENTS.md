@@ -20,7 +20,7 @@ python -m app.tools.export_event_schemas
 
 - **Nunca** leer ni escribir las bases de `users`, `channels` o `messages`, ni modificar archivos del repositorio del curso.
 - **Nunca** poner credenciales en archivos versionados. `LLM_API_KEY` va solo en `.env` (ignorado por git), no en `.env.example`.
-- **Nunca** llamar a la API real de Gemini desde pruebas automáticas (gasta cuota y envía datos a Google). Usar el proveedor `mock` o `httpx.MockTransport`.
+- **Nunca** llamar a la API real de Gemini desde pruebas automáticas (gasta cuota y envía datos a Google). Las pruebas usan el proveedor `mock` (lo fija `tests/conftest.py`) o `httpx.MockTransport`; el valor por defecto en ejecución es `gemini` y exige la key.
 - No hacer merge a `main` ni subir cambios sin que se pida. Trabajar en ramas `feature/*`.
 - Los datos de prueba que se creen en el demo del curso (usuarios, canales, mensajes) deben borrarse al terminar; no borrar lo que ya existía.
 - Toda escritura que cambie estado y emita un evento debe hacerlo en **una sola operación** sobre el documento (outbox). No publicar al broker desde la ruta HTTP.

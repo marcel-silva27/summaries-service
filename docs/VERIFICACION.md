@@ -4,7 +4,7 @@ Qué se comprobó y cómo. Los comandos para repetirlo están en el [README](../
 
 ## Pruebas automáticas
 
-**259 pruebas aprobadas** con MongoDB 7 y RabbitMQ reales (stack aislado de `compose.test.yaml`); el núcleo del chat y Gemini se simulan (`httpx.MockTransport`), así que no usan cuota ni datos reales.
+**266 pruebas aprobadas** con MongoDB 7 y RabbitMQ reales (stack aislado de `compose.test.yaml`); el núcleo del chat y Gemini se simulan (`httpx.MockTransport`), así que no usan cuota ni datos reales.
 
 | Área | Qué cubren |
 | --- | --- |
@@ -16,6 +16,7 @@ Qué se comprobó y cómo. Los comandos para repetirlo están en el [README](../
 | LLM | Mock; Gemini con transporte simulado (429 y espera corta, modelo de respaldo, errores definitivos, esquema inválido) y salida estructurada |
 | Eventos | Cada evento emitido de verdad valida contra su esquema Pydantic y contra el JSON Schema de `docs/eventos/`; los archivos están sincronizados con los modelos |
 | OpenAPI | Documento válido (`openapi-spec-validator`), todas las operaciones con descripción y errores documentados, ejemplos que son instancias válidas |
+| Chat simulado | Cumple los contratos estrictos del cliente del núcleo, sus POST responden 201, publica `chat.message.created` y `chat.channel.entered` válidos (también contra RabbitMQ real) |
 | Resumen automático | Umbral estricto (50 no, 51 sí), una solicitud activa por canal con varios workers, idempotencia por `entry_id`, referencias inválidas, ventana de 7 días, flujo completo por el broker |
 
 ## Pila real (chat del curso + este servicio)
@@ -28,7 +29,8 @@ Verificado con el demo de la Unidad 3 en ejecución y el override de `RABBITMQ_U
 | RabbitMQ recreado (contenedor nuevo, mismo volumen) | La solicitud en vuelo se completa |
 | Mongo caído | `POST` y `GET` responden `503`, `/health` sigue ok; al volver, el servicio se recupera sin reiniciar |
 | Servicio reiniciado con solicitudes pendientes y broker caído | Al volver el broker se completan todas |
-| Clon limpio del repositorio siguiendo el README (sin `.env`, proveedor `mock`) | Arranca, imagen no root saludable, API y `/docs` responden, el resumen se completa con `structured` |
+| Clon limpio del repositorio siguiendo el README | Arranca, imagen no root saludable, API y `/docs` responden y el resumen se completa con `structured` |
+| Sin `LLM_API_KEY` | El servicio se niega a arrancar con un mensaje que indica cómo configurarla |
 | Salida estructurada con Gemini real (desde el clon, con `.env`) | `completada` en ~2,5 s; `decisions`, `events` (con `when`) y `tasks` (con `assignee`) correctos; `content` armado por el código |
 | Resumen por intervalo con Gemini real | `pendiente → procesando → completada` con decisiones, tareas con responsable y eventos correctos |
 | Resumen automático con Gemini real | El mismo `chat.channel.entered` publicado dos veces abre **una** solicitud, que se completa |
@@ -45,3 +47,7 @@ Los datos de prueba creados en el demo del curso se borraron después de cada ej
 - El límite de 7 días se contaba desde el fin del intervalo pedido, y uno con fin en el futuro dejaba `fallida` un resumen válido. Corregido: ahora se cuenta desde el menor entre el fin del intervalo y el momento de la solicitud.
 - Las caídas de broker o Mongo generaban una traza completa por segundo en el log. Ahora es una línea por intento.
 - El demo del curso devuelve 500 en sus `POST` de creación y nunca publica `chat.message.created` (ver [REFERENCIA](./REFERENCIA.md#hallazgos-sobre-el-código-del-curso)).
+
+## Recorrido completo con la demo (chat simulado + Gemini real)
+
+Con `docker-compose.demo.yaml`: 20 comprobaciones sobre todos los endpoints, todas correctas — resumen incremental con `user_id` (`pendiente → procesando → completada` en ~2,4 s, con decisiones, eventos y tareas con responsable), `GET` por id, listado, `latest`, resumen por `timeInterval`, resumen automático disparado desde `POST /channels/{id}/enter` del Gateway simulado (y una segunda entrada sin mensajes nuevos que no crea nada), los errores documentados (404, 422 por usuario, por intervalo invertido y por `limit=0`), eventos con paginación, `/health`, `/openapi.json` y `/docs`. Sin trazas en los logs; cada llamada a Gemini tardó 1,2–2,4 s.

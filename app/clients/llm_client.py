@@ -108,7 +108,8 @@ class GeminiProvider:
                  transport: httpx.BaseTransport | None = None,
                  sleep: Callable[[float], None] = time.sleep):
         if not api_key.strip() or not model.strip():
-            raise ValueError("LLM_PROVIDER=gemini requiere LLM_API_KEY y LLM_MODEL")
+            raise ValueError("Falta la configuración de Gemini: define LLM_API_KEY y LLM_MODEL en un archivo .env "
+                             "(ver README, sección «Configurar Gemini»). El proveedor mock es solo para pruebas.")
         self.models = [model.strip()] + ([fallback_model.strip()] if fallback_model.strip()
                                          and fallback_model.strip() != model.strip() else [])
         self.max_retry_wait = max_retry_wait

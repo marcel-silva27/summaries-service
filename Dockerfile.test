@@ -5,4 +5,5 @@ RUN pip install --no-cache-dir -r requirements-test.txt
 COPY app ./app
 COPY tests ./tests
 COPY docs ./docs
+COPY demo ./demo
 CMD ["python", "-m", "pytest", "-q", "tests"]

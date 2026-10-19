@@ -1,0 +1,21 @@
+# Demo con un chat simulado (sin depender del chat del curso, que tiene un bug en sus POST):
+#   docker network create microsvcs        # una sola vez, si no existe
+#   docker compose -f docker-compose.yaml -f docker-compose.demo.yaml up -d --build --wait
+# Requiere el archivo .env con LLM_API_KEY (ver README). Swagger: summaries :8004/docs, chat simulado :8010/docs.
+services:
+  chat-sim:
+    build: ./demo/chat-sim
+    ports:
+      - "8010:8000"
+    environment:
+      BROKER_URL: amqp://summaries-rabbitmq:5672
+    depends_on:
+      summaries-rabbitmq:
+        condition: service_healthy
+    networks:
+      microsvcs:
+        aliases: [users, channels, messages]   # El servicio de resúmenes los busca por estos nombres.
+
+  summaries:
+    environment:
+      MESSAGE_THRESHOLD: "5"   # Con solo 12 mensajes de ejemplo, el resumen automático dispara con más de 5.

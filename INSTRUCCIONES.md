@@ -2,7 +2,7 @@
 
 Esta guía es para **PowerShell**, desde la carpeta `summaries-service/`. Se necesita Docker Desktop iniciado y Docker Compose; no hace falta Python. En Linux/macOS, los comandos equivalentes están en el [README](./README.md).
 
-El servicio está completo: API con polling, worker, eventos de resultado y resumen automático. Por defecto usa el proveedor `mock` (resumen **simulado**); para Gemini real, ver el README (sección *Configurar Gemini*).
+El servicio está completo: API con polling, worker, eventos de resultado y resumen automático. **Necesita una API key de Gemini** en un archivo `.env` (`LLM_API_KEY=...`, ver el README); sin ella el servicio no arranca. El `.env` no se sube a GitHub.
 
 ## 1. Ejecutar las pruebas automáticas, sin levantar el chat
 
@@ -132,7 +132,7 @@ curl.exe -i "$base/api/v1/channels/$canalId/summaries/latest"
 
 | Consulta | Resultado esperado ahora |
 | --- | --- |
-| GET por summaryId | 200. `pendiente` → `procesando` → `completada` en unos segundos, con `content` (simulado con `mock`, real con Gemini) |
+| GET por summaryId | 200. `pendiente` → `procesando` → `completada` en unos segundos, con `content` (generado por Gemini) |
 | Listado del canal | 200, lista con las solicitudes guardadas |
 | latest | 404 mientras no haya un resumen completado; después, 200 con el último |
 
