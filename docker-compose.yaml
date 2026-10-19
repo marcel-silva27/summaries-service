@@ -4,8 +4,6 @@ services:
     stop_grace_period: 20s
     ports:
       - "8004:8000"
-    volumes:
-      - ./app:/app/app
     # .env.example son los valores por defecto (versionados, sin secretos);
     # .env (ignorado por git) los sobrescribe, p. ej. con LLM_API_KEY.
     env_file:

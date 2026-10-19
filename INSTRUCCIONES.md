@@ -1,12 +1,12 @@
-# Cómo ejecutar y probar el avance de los pasos 1–6
+# Guía paso a paso (PowerShell)
 
-Los comandos de esta guía son para **PowerShell**, desde la carpeta `summaries-service/`. Se necesita Docker Desktop iniciado y Docker Compose. No hace falta instalar Python en Windows.
+Esta guía es para **PowerShell**, desde la carpeta `summaries-service/`. Se necesita Docker Desktop iniciado y Docker Compose; no hace falta Python. En Linux/macOS, los comandos equivalentes están en el [README](./README.md).
 
-Actualmente funcionan persistencia, cliente del núcleo, ventanas, API REST y RabbitMQ. **El worker y el LLM aún no están implementados:** una solicitud aceptada queda en `pendiente`, con content=null. El disparo automático por Gateway y los eventos generated/failed también pertenecen a los pasos siguientes.
+El servicio está completo: API con polling, worker, eventos de resultado y resumen automático. Por defecto usa el proveedor `mock` (resumen **simulado**); para Gemini real, ver el README (sección *Configurar Gemini*).
 
 ## 1. Ejecutar las pruebas automáticas, sin levantar el chat
 
-Esta es la forma más rápida de comprobar el avance. Levanta MongoDB y RabbitMQ independientes de los del proyecto; las llamadas HTTP al núcleo se simulan.
+Esta es la forma más rápida de comprobar que todo funciona. Levanta MongoDB y RabbitMQ independientes de los del proyecto; las llamadas HTTP al núcleo se simulan.
 
 ```powershell
 docker compose -p summaries-tests -f compose.test.yaml up --build --abort-on-container-exit --exit-code-from tests --attach tests
@@ -15,9 +15,9 @@ docker compose -p summaries-tests -f compose.test.yaml down -v
 "Codigo de pruebas: $codigoPruebas (0 = correcto)"
 ```
 
-Resultado del avance actual: **159 passed**, código 0. Pueden aparecer avisos de deprecación de Starlette/Pika sin que fallen las pruebas. La limpieza con `-v` se aplica únicamente al proyecto aislado `summaries-tests`.
+Resultado esperado: **227 passed**, código 0. Pueden aparecer avisos de deprecación de Starlette/Pika sin que fallen las pruebas. La limpieza con `-v` se aplica únicamente al proyecto aislado `summaries-tests`.
 
-La suite comprueba API, persistencia, errores, concurrencia, ventanas de más de 1000 mensajes, tardíos, publicación/recepción RabbitMQ, replays y cola de errores. Los estados completada/fallida se verifican con datos controlados, sin un LLM real.
+La suite comprueba API, persistencia, errores, concurrencia, ventanas de más de 1000 mensajes, tardíos, publicación/recepción RabbitMQ, replays y cola de errores. El LLM y el núcleo se simulan: estas pruebas no usan cuota de Gemini.
 
 ## 2. Levantar el entorno completo
 
@@ -32,7 +32,7 @@ $rutaChat = 'C:\ruta\microservicios\03_Comunicación\demo'
 $composeChat = Join-Path $rutaChat 'docker-compose.yaml'
 ```
 
-Si necesitas obtener el chat base, su repositorio es https://github.com/rmasad/microservicios. Para probar este avance debes tener una copia de la rama que lo contiene; `main` puede conservar solamente el esqueleto inicial.
+Si necesitas obtener el chat base, su repositorio es https://github.com/rmasad/microservicios.
 
 ### 2.2. Levantar users, channels y messages
 
@@ -132,11 +132,11 @@ curl.exe -i "$base/api/v1/channels/$canalId/summaries/latest"
 
 | Consulta | Resultado esperado ahora |
 | --- | --- |
-| GET por summaryId | 200, pendiente y content=null |
+| GET por summaryId | 200. `pendiente` → `procesando` → `completada` en unos segundos, con `content` (simulado con `mock`, real con Gemini) |
 | Listado del canal | 200, lista con las solicitudes guardadas |
-| latest sin completados | 404, Summary not found; es normal en esta etapa |
+| latest | 404 mientras no haya un resumen completado; después, 200 con el último |
 
-No esperes una transición automática al repetir el GET: falta el worker del paso 7. El listado usa limit de 1 a 1000 y offset desde 0.
+Repite el GET hasta que `messageState` sea `completada` o `fallida` (con `error`). Si el canal no tiene mensajes dentro de la ventana, queda `fallida` con *No hay mensajes en la ventana solicitada*. El listado usa limit de 1 a 1000 y offset desde 0.
 
 ### 3.4. Solicitar un intervalo
 
@@ -178,7 +178,7 @@ docker compose exec -T summaries-rabbitmq rabbitmqctl list_queues name messages 
 Invoke-RestMethod "$base/api/v1/events" | ConvertTo-Json -Depth 8
 ```
 
-Esperado: las colas `summaries_for_chat_messages_queue` y `summaries_for_summary_requested_queue` tienen un consumidor cada una. `summaries_errors_queue` no tiene consumidor automático. Que messages=0 es normal: puede que los eventos ya se hayan consumido.
+Esperado: las colas `summaries_for_chat_messages_queue`, `summaries_for_summary_requested_queue` y `summaries_for_channel_entered_queue` tienen un consumidor cada una. `summaries_errors_queue` no tiene consumidor automático. Que messages=0 es normal: puede que los eventos ya se hayan consumido.
 
 Para confirmar la recepción de las solicitudes en la base **propia** del servicio:
 
@@ -186,34 +186,23 @@ Para confirmar la recepción de las solicitudes en la base **propia** del servic
 docker compose exec -T summaries-mongodb mongosh summaries --quiet --eval 'db.summaries.find({}, {_id:0, id:1, messageState:1, _request_delivery:1}).sort({created_at:-1}).limit(5).toArray()'
 ```
 
-Tras unos instantes, published=true y received=true indican publicación confirmada y recepción guardada. MessageState sigue pendiente. Si cambiaste MONGODB_DATABASE, reemplaza `summaries` en el comando. Esta inspección es solo de summaries-mongodb; no requiere entrar a bases del núcleo.
+Tras unos instantes, published=true y received=true indican publicación confirmada y recepción guardada. Después el worker lo toma y `messageState` pasa a `completada`. Si cambiaste MONGODB_DATABASE, reemplaza `summaries` en el comando. Esta inspección es solo de summaries-mongodb; no requiere entrar a bases del núcleo.
 
 `GET /api/v1/events` lee los eventos desde Mongo (también `summary.generated` / `summary.failed` al terminar), así que sobreviven a reiniciar la aplicación.
 
-## 5. Probar la ventana de mensajes sin LLM (opcional)
+## 5. Probar el resumen automático y los eventos de resultado
 
-Usa el `$summaryId` del apartado 3.2. Este comando llama al servicio de ventanas, reconstruye el historial mediante la API del núcleo y guarda el snapshot de esa solicitud; no genera contenido ni cambia su estado.
+Para que dispare con pocos mensajes, baja el umbral al levantar el servicio (por defecto es 50): crea un archivo `.env` con `MESSAGE_THRESHOLD=3` y ejecuta `docker compose up -d`. Publica al menos 4 mensajes en el canal y simula la entrada de un usuario (lo que haría el Gateway):
 
 ```powershell
-@'
-import sys
-from pymongo import MongoClient
-from app import config
-from app.clients.core_client import CoreClient
-from app.repository import MongoRepository
-from app.services import SummaryService
-
-with MongoClient(config.MONGODB_URL, tz_aware=True,
-                 serverSelectionTimeoutMS=config.MONGODB_TIMEOUT_MS) as mongo, CoreClient() as core:
-    repository = MongoRepository(mongo[config.MONGODB_DATABASE])
-    window = SummaryService(repository, core).build_window(sys.argv[1])
-    print("Mensajes:", len(window.messages))
-    print("Intervalo:", window.time_interval.model_dump(mode="json") if window.time_interval else None)
-    print("IDs:", [message.id for message in window.messages])
-'@ | docker compose exec -T summaries python - $summaryId
+docker compose exec -T summaries python -m app.tools.publish_channel_entered $canalId $usuarioId entrada-1
+docker compose exec -T summaries python -m app.tools.publish_channel_entered $canalId $usuarioId entrada-1
+Start-Sleep 5
+Invoke-RestMethod "$base/api/v1/channels/$canalId/summaries" | ConvertTo-Json -Depth 6
+Invoke-RestMethod "$base/api/v1/events" | ConvertTo-Json -Depth 8
 ```
 
-Si el canal no contiene mensajes elegibles, Mensajes=0 es válido. Un snapshot ya guardado se reutiliza; para probar cambios posteriores de la conversación, crea otra solicitud. Los casos de tardíos, confirmación de cobertura y concurrencia se verifican completos en las pruebas automáticas del apartado 1.
+Esperado: **una sola** solicitud aunque se repita `entrada-1`, que termina `completada`; en los eventos aparecen `summary.requested` (con `trigger: automatic`) y `summary.generated`. Una segunda entrada sin mensajes nuevos no crea nada. Vuelve a borrar `.env` o `MESSAGE_THRESHOLD` cuando termines.
 
 ## 6. Logs, reinicio y apagado
 
@@ -243,7 +232,9 @@ Mongo conserva summaries-data y RabbitMQ summaries-rabbitmq-data. Vuelve a inici
 | No llegan eventos de messages | Reaplicar el override RABBITMQ_URL y confirmar que usa el mismo broker |
 | 503 en POST/listado/latest | Salud y conectividad de users/channels o Mongo; mirar logs de summaries |
 | 502 del núcleo o error al crear datos en sus APIs | Revisar su Swagger y sus logs; validar que el núcleo responde antes de probar summaries |
-| Latest responde 404 o el resumen queda pendiente | Resultado normal mientras no exista el worker/LLM |
+| El resumen queda `pendiente` | RabbitMQ caído o `messages`/el servicio sin conexión al broker: revisar `published`/`received` en Mongo y los logs; al volver el broker se completa solo |
+| El resumen termina `fallida` | Leer `error`: ventana vacía, cuota del LLM agotada, credencial inválida, etc. |
+| Los `POST` de users/channels/messages del demo devuelven 500 | Es un bug del demo del curso (el dato sí se guarda); obtén los IDs con los GET. Ver README |
 | El código de pruebas es distinto de 0 | Revisar la salida de pytest; no tomar el resultado del comando de limpieza como resultado de las pruebas |
 
-Estado y siguientes pasos: [README.md](./README.md). Decisiones: [CLAUDE.md](./CLAUDE.md). Conceptos y contratos: [REFERENCIA.md](./docs/REFERENCIA.md).
+Guía principal: [README.md](./README.md). Decisiones: [CLAUDE.md](./CLAUDE.md). Conceptos y contratos: [REFERENCIA.md](./docs/REFERENCIA.md).

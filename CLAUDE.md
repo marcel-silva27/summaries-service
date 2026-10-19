@@ -99,7 +99,7 @@ Propuesta completa (con diagramas de arquitectura y flujo end2end): https://clau
 | 7 | Worker + cliente LLM (mock y Gemini) | Hecho |
 | 8 | Publicar `summary.generated` / `summary.failed` con entrega fiable | Hecho |
 | 9 | Resumen automático por entrada al canal (Gateway) y `messageThreshold` | Hecho (lado summaries; sin Gateway real) |
-| 10 | End2end, pulido, README y entrega pública | Pendiente |
+| 10 | End2end, pulido, README y entrega pública | Hecho (falta el merge a `main`) |
 
 El POST devuelve 202 y la solicitud llega a la bandeja durable del worker; permanece `pendiente` hasta implementar el paso 7. Servicio en `localhost:8004` (`/docs`, `/health`); requiere el chat base corriendo (crea la red `microsvcs`, aquí `external: true`).
 
@@ -213,3 +213,13 @@ El servicio ya cumple su lado del contrato; al Gateway le corresponde:
 - La solicitud automática es una solicitud normal (outbox, `requested_by` = quien entró, `trigger: "automatic"` y `entry_id` en el evento).
 - **Prueba sin Gateway:** `python -m app.tools.publish_channel_entered CHANNEL_ID USER_ID [ENTRY_ID]`. Verificado con el chat real y Gemini: un evento repetido abrió una sola solicitud, se completó con decisiones/evento/tarea correctos, y una segunda entrada sin mensajes nuevos dio `no_recent_messages`.
 - **El Gateway no es necesario** para completar la tarea ni para probar el paso 9; solo sería el productor real de `chat.channel.entered`.
+
+### Paso 10 — integración, resiliencia y entrega (hecho)
+- **Resiliencia verificada con la pila real** (chat + summaries, proveedor `mock`): RabbitMQ caído/recreado, Mongo caído (503 sin caerse, recuperación sin reiniciar), reinicio del servicio con solicitudes pendientes y broker caído. Todas las solicitudes se completaron al volver la dependencia. Tabla en el README.
+- **Defecto corregido al probar:** el límite de 7 días se contaba desde el fin del intervalo; un intervalo con fin en el futuro lo corría y dejaba `fallida` a un resumen válido. Ahora la referencia es `min(fin del intervalo, momento de la solicitud)`.
+- **Docker de entrega:** imagen con usuario no root (uid 10001), `HEALTHCHECK` y sin `--reload`; el compose ya no monta el código. Desarrollo: `docker-compose.dev.yaml`.
+- **Errores:** handler para excepciones inesperadas (500 `{"detail":"Internal error"}` sin detalles; el diagnóstico va al log). Prueba que las respuestas públicas solo exponen los campos documentados y ningún `_interno`.
+- **Logs:** las caídas de broker/Mongo se registran en una línea por intento (antes, una traza completa por segundo).
+- **Limpieza:** se eliminaron las funciones heredadas del esqueleto en `core_client` y el espejo de eventos en memoria.
+- **Documentación:** el README es la guía única (Linux/macOS); `INSTRUCCIONES.md` es el recorrido en PowerShell; `docs/REFERENCIA.md` tiene los contratos.
+- **Pendiente:** mergear `feature/paso-7-worker-llm` a `main` (por indicación del equipo, no se mergea hasta que lo pidan) y avisar al profesor del bug del demo.

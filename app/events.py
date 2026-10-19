@@ -114,9 +114,9 @@ class EventBroker:
                         last_flush = monotonic()
                         self._flush_outbox(channel)
                     connection.process_data_events(time_limit=0.2)
-            except (pika.exceptions.AMQPError, PyMongoError, OSError):
-                if not self._stop.is_set():
-                    logger.warning("Event connection unavailable; retrying", exc_info=True)
+            except (pika.exceptions.AMQPError, PyMongoError, OSError) as error:
+                if not self._stop.is_set():  # Una línea por intento: una caída larga no llena el log de trazas.
+                    logger.warning("Event connection unavailable; retrying: %s: %s", type(error).__name__, error)
             finally:
                 self.ready.clear()
                 if connection is not None and connection.is_open:
@@ -183,7 +183,7 @@ class EventBroker:
                 self.on_request_received()
         except PyMongoError:
             # La entrega sigue pendiente; esperar evita un requeue continuo durante una caída.
-            logger.warning("Storage unavailable while consuming event", exc_info=True)
+            logger.warning("Storage unavailable while consuming event; will be redelivered")
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
             self._stop.wait(config.BROKER_RETRY_SECONDS)
         except (ValueError, ServiceError):

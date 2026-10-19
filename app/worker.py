@@ -72,9 +72,9 @@ class SummaryWorker:
             self._wake.clear()
             try:
                 self.drain()
-            except PyMongoError:
+            except PyMongoError as error:
                 # El lease vence solo; la solicitud se reclama cuando Mongo vuelva.
-                logger.warning("Storage unavailable in worker; retrying", exc_info=True)
+                logger.warning("Storage unavailable in worker; retrying: %s", type(error).__name__)
                 self._stop.wait(config.WORKER_RETRY_SECONDS)
 
     def drain(self) -> int:

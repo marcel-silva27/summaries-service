@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,13 +9,13 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
 
 from app import config
-from app.clients import core_client
 from app.clients.core_client import CoreClient, CoreClientDependency
 from app.errors import (
     ChannelNotFound, DependencyFailed, DependencyUnavailable, PersistenceConflict,
     SummaryNotFound, UserNotFound, register_handlers,
 )
 from app.main import app
+from app.models import Digest, TimeInterval
 from app.repository import RepositoryDependency
 
 
@@ -291,18 +292,6 @@ def test_core_dependency_preserves_http_error_contract():
     assert result.json() == {"detail": UserNotFound.detail}
 
 
-@pytest.mark.parametrize("function,resource,payload", [
-    ("get_channel", "channel", {"id": "channel", "name": "General"}),
-    ("get_user", "user", {"id": "user", "display_name": "Ana"}),
-    ("list_messages", "channel", []),
-])
-def test_core_original_functions_remain_usable_and_close_their_clients(monkeypatch, function, resource, payload):
-    client = _core(lambda _: httpx.Response(200, json=payload))
-    monkeypatch.setattr(core_client, "CoreClient", lambda: client)
-    assert getattr(core_client, function)(resource) == payload
-    assert client._http.is_closed
-
-
 def test_post_is_accepted_durably_without_a_running_broker_or_llm(api, repository):
     result = api.post("/api/v1/channels/channel/summaries", json={"user_id": "user"})
     assert result.status_code == 202
@@ -373,3 +362,47 @@ def test_polling_is_local_and_exposes_failure_without_calling_core(api, reposito
     assert result.json()["messageState"] == "fallida"
     assert result.json()["error"] == "LLM timeout"
     assert api.get("/api/v1/summaries/missing").status_code == 404
+
+
+NOW = datetime(2026, 10, 18, 15, tzinfo=timezone.utc)
+
+
+# --- Paso 10: errores inesperados y respuestas públicas ---
+
+def test_unexpected_errors_return_a_generic_500_without_internal_details(caplog):
+    broken = FastAPI()
+    register_handlers(broken)
+
+    @broken.get("/boom")
+    def boom():
+        raise RuntimeError("secret-internal-detail mongodb://user:password@host")
+
+    with TestClient(broken, raise_server_exceptions=False) as client:
+        response = client.get("/boom")
+    assert response.status_code == 500 and response.json() == {"detail": "Internal error"}
+    assert "secret-internal-detail" not in response.text
+    assert "Unhandled error in GET /boom" in caplog.text  # El diagnóstico queda en el log.
+
+
+def test_public_responses_expose_only_the_documented_fields(api, repository):
+    from app.models import Summary
+
+    posted = api.post("/api/v1/channels/channel/summaries", json={"user_id": "user"})
+    assert set(posted.json()) == {"summary_id", "messageState"}
+    summary_id = posted.json()["summary_id"]
+    repository.start_summary(summary_id)
+    repository.save_digest(Digest(
+        summary_id=summary_id, channel_id="channel", content="Decisión: entregar el viernes.",
+        timeInterval=TimeInterval(start=NOW - timedelta(hours=1), end=NOW + timedelta(hours=1)),
+        message_count=1, first_message_id="m1", last_message_id="m1", last_message_at=NOW))
+    repository.complete_summary(summary_id)
+    bodies = [api.get(f"/api/v1/summaries/{summary_id}").json(),
+              api.get("/api/v1/channels/channel/summaries/latest").json(),
+              *api.get("/api/v1/channels/channel/summaries").json()]
+    for body in bodies:
+        assert set(body) == set(Summary.model_fields)
+        assert not any(key.startswith("_") for key in body)
+    for response in (api.get("/api/v1/summaries/unknown"), api.get("/api/v1/channels/missing/summaries/latest"),
+                     api.post("/api/v1/channels/missing/summaries"), api.get("/api/v1/channels/channel/summaries?limit=0")):
+        assert response.status_code in (404, 422) and "detail" in response.json()
+        assert "Traceback" not in response.text and "mongodb://" not in response.text

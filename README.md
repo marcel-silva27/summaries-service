@@ -1,222 +1,190 @@
 # Servicio de Resúmenes
 
-Capacidad vertical para la cátedra de Microservicios. Genera resúmenes automáticos (vía LLM) sobre las conversaciones del chat base del curso ([rmasad/microservicios](https://github.com/rmasad/microservicios)), sin acceder a sus bases de datos: toda interacción ocurre por sus APIs públicas o por eventos del broker.
+Capacidad vertical para la cátedra de Microservicios. Genera resúmenes automáticos de las conversaciones del chat base del curso ([rmasad/microservicios](https://github.com/rmasad/microservicios)) con un LLM, priorizando **decisiones tomadas, eventos y asignación de tareas**. No accede a las bases del chat: solo usa sus APIs públicas y los eventos del broker.
 
-Detalle de dominio, contratos y decisiones de arquitectura: ver [`CLAUDE.md`](./CLAUDE.md) y la [propuesta completa](https://claude.ai/artifact/BSeEEVB7yRPouL1wqsg497).
+Un resumen se genera de dos formas:
+
+- **Bajo demanda**, opcionalmente acotado a un `timeInterval`.
+- **Automáticamente** cuando un usuario entra a un canal con más de `MESSAGE_THRESHOLD` mensajes nuevos desde el último resumen.
+
+## Cómo funciona
+
+El `POST` **no espera al LLM**: responde `202` + `summary_id` y el cliente consulta por polling hasta `completada` o `fallida`.
+
+```text
+Cliente ──POST /channels/{id}/summaries──▶ API ──(1 escritura en Mongo: solicitud + evento)──▶ 202 + summary_id
+                                            │
+                      outbox ──▶ RabbitMQ: summary.requested ──▶ inbox ──▶ Worker ──▶ LLM (mock | Gemini)
+                                                                              │
+Cliente ◀──GET /summaries/{id} (polling)── Mongo ◀── digest + estado + checkpoint ┘
+                                                                              └──▶ summary.generated | summary.failed
+chat.message.created (continuo) ──▶ historial local        chat.channel.entered (Gateway) ──▶ resumen automático
+```
+
+Piezas: API REST (FastAPI), worker de generación con lease y reintentos, hilo de RabbitMQ (consumo e outbox), MongoDB propio (`summaries`, `digests`, `checkpoints`, `messages`, `entries`). Detalle de contratos y decisiones en [`docs/REFERENCIA.md`](./docs/REFERENCIA.md) y [`CLAUDE.md`](./CLAUDE.md).
 
 ## Estado y alcance
 
-Etapas **1 a 6 completadas**: FastAPI, persistencia Mongo, cliente HTTP, ventanas reconciliadas, REST con polling e integración RabbitMQ.
+Los 10 pasos están implementados y probados: API con polling, persistencia, cliente del núcleo, ventanas de mensajes, RabbitMQ (outbox/inbox), worker, proveedores de LLM, eventos de resultado, resumen automático y resiliencia.
 
-Las cuatro rutas de summaries ya funcionan. POST valida referencias y devuelve `202` con una solicitud durable; RabbitMQ la publica y registra su recepción. Un worker toma la solicitud y la completa con el proveedor configurado: por defecto `mock`, que **simula** el resumen (no es un LLM real); Gemini se activa con `LLM_PROVIDER=gemini` en `.env`. Al terminar, el servicio emite `summary.generated` o `summary.failed` (guardado junto al estado y publicado con reintento). `GET /api/v1/events` lista los eventos durables desde Mongo.
+Conviene saber antes de usarlo:
 
-Decisiones en [`CLAUDE.md`](./CLAUDE.md). Conceptos, contratos y detalles reunidos en [`docs/REFERENCIA.md`](./docs/REFERENCIA.md).
-
-Guía paso a paso para ejecutar el entorno y probar el avance desde PowerShell: [`INSTRUCCIONES.md`](./INSTRUCCIONES.md).
-
-## Estructura
-
-```text
-summaries-service/
-├── CLAUDE.md                 # Dominio, contratos y decisiones vigentes
-├── README.md                 # Ejecución, pruebas y próximos pasos
-├── INSTRUCCIONES.md          # Guía práctica de ejecución y pruebas en PowerShell
-├── docs/REFERENCIA.md        # Glosario y referencia técnica global
-├── docker-compose.yaml       # Servicio, Mongo y RabbitMQ con volúmenes propios
-├── compose.test.yaml         # Pruebas aisladas con MongoDB 7 y RabbitMQ reales
-├── Dockerfile
-├── Dockerfile.test
-├── requirements.txt
-├── requirements-test.txt
-├── tests/                    # Persistencia, cliente HTTP y regresión de FastAPI
-└── app/
-    ├── main.py               # Lifespan de Mongo/HTTP, dependencias, health y events
-    ├── config.py             # Variables de entorno
-    ├── models.py             # Summary, Digest, Checkpoint y LocalMessage
-    ├── repository.py         # PyMongo síncrono y dependencia para FastAPI
-    ├── services.py           # Orquestación REST, reconstrucción y snapshots de ventanas
-    ├── errors.py             # Errores 404, 409, 422, 502 y 503
-    ├── events.py             # RabbitMQ: outbox requested, consumo continuo y cola de errores
-    ├── routes/summaries.py   # POST 202, polling, listado y latest
-    └── clients/
-        ├── core_client.py    # Cliente único de users/channels/messages
-        └── llm_client.py     # Cliente LLM, pendiente
-```
+- **Por defecto el LLM es `mock`**: devuelve un resumen **simulado**. Para usar Gemini real, ver [Configurar Gemini](#configurar-gemini).
+- **No hay Gateway.** El curso no lo entrega. El servicio ya consume `chat.channel.entered` y publica `summary.generated`/`summary.failed`; mientras no exista, la entrada se prueba con una herramienta (ver [Resumen automático](#resumen-automático)).
+- **El demo del curso tiene un bug**: sus `POST` de creación responden 500 aunque guardan el dato, y `messages` **nunca publica `chat.message.created`** (falla al serializar el `_id` de Mongo). Por eso el servicio reconcilia el historial con `GET /channels/{id}/messages` en cada ventana. Detalle en `CLAUDE.md`.
+- No hay autenticación (el chat base tampoco la tiene).
 
 ## Requisitos
 
-- Docker y Docker Compose
-- El chat base del curso corriendo (ver más abajo)
+Docker y Docker Compose. No hace falta Python en el equipo. El chat base debe estar corriendo, porque crea la red `microsvcs`.
 
 ## Cómo correrlo
 
-1. Clona el repo del curso en una carpeta aparte (no la mezcles con este repo) y levanta el chat base — esto crea la red `microsvcs`:
+1. Chat base del curso (en una carpeta aparte, sin modificarlo):
 
    ```bash
    git clone https://github.com/rmasad/microservicios.git
-   cd microservicios/03_Comunicación/demo
-   docker compose up --build
+   docker compose -p demo -f microservicios/03_Comunicación/demo/docker-compose.yaml up -d --build
    ```
 
-2. En otra terminal, levanta este servicio — se conecta a la red ya creada en el paso 1:
+2. Este servicio (espera a que Mongo, RabbitMQ y la app estén saludables):
 
    ```bash
    cd summaries-service
-   docker compose up --build
+   docker compose up -d --build --wait
    ```
 
-3. Conecta `messages` al broker elegido. Desde PowerShell, sustituye la ruta del compose del curso:
+3. Conectar `messages` al broker de este servicio (un override por stdin: no crea ni edita archivos del curso; repetir si se recrea `messages`):
 
-   ```powershell
-   $coreCompose = '<ruta-al-chat-base>/docker-compose.yaml'
-   @'
-   services:
-     messages:
-       environment:
-         RABBITMQ_URL: amqp://summaries-rabbitmq:5672
-   '@ | docker compose -p demo -f $coreCompose -f - up -d --no-deps messages
+   ```bash
+   printf 'services:\n  messages:\n    environment:\n      RABBITMQ_URL: amqp://summaries-rabbitmq:5672\n' \
+     | docker compose -p demo -f microservicios/03_Comunicación/demo/docker-compose.yaml -f - up -d --no-deps messages
    ```
 
-   Es un override por stdin: no crea archivos ni edita el repo del curso. Ya se aplicó al entorno actual. Repetirlo si se recrea el chat desde su compose original; si el proyecto tiene otro nombre, reemplazar `demo`.
+4. Listo: API `http://localhost:8004`, OpenAPI `http://localhost:8004/docs`, salud `http://localhost:8004/health`.
 
-4. Servicio: `http://localhost:8004`; OpenAPI: `http://localhost:8004/docs`; salud: `http://localhost:8004/health`.
+Para apagar: `docker compose down` (conserva los volúmenes `summaries-data` y `summaries-rabbitmq-data`; con `-v` se borran). **Desarrollo** con código montado y recarga: `docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up --build`. Guía paso a paso en PowerShell: [`INSTRUCCIONES.md`](./INSTRUCCIONES.md).
 
-Compose espera Mongo y RabbitMQ saludables. FastAPI comprueba conexión/índices de Mongo y administra el cliente HTTP y el hilo de eventos; `/health` conserva `{"status":"ok"}` como liveness. Si RabbitMQ cae después, el publicador reconecta y conserva los requested pendientes en Mongo.
+### Configurar Gemini
 
-Mongo usa `summaries-data` y RabbitMQ `summaries-rabbitmq-data`; ambos sobreviven a recreaciones. No ejecutar `docker compose down -v` sobre desarrollo si se quieren conservar.
+Crea un `.env` (está en `.gitignore`; **nunca pongas la key en `.env.example`**, que está versionado):
 
-No se editan los archivos de `microservicios/`; solo se configura RABBITMQ_URL en ejecución.
+```env
+LLM_PROVIDER=gemini
+LLM_API_KEY=tu-key-de-google-ai-studio
+LLM_MODEL=gemini-3.5-flash-lite
+LLM_FALLBACK_MODEL=gemini-3.8-flash
+```
 
-## Flujo de trabajo
+La key se obtiene gratis en Google AI Studio (no la incluye la suscripción de la app de Gemini). Con el modelo principal agotado (429) o con fallos del proveedor, se usa el de respaldo; si ambos fallan, el resumen queda `fallida` con el motivo. En la capa gratuita Google puede usar lo que se le envía para mejorar sus modelos: usa conversaciones sin datos personales. Los IDs de modelo disponibles se listan con `GET https://generativelanguage.googleapis.com/v1beta/models`.
 
-- Todo el código y los commits van en `summaries-service/`, nunca en la carpeta del repo del curso.
-- `main` como rama estable; features en ramas `feature/<nombre>`, PR contra `main`.
-- Antes de tocar un contrato con el núcleo (rutas o payloads de `users`/`channels`/`messages`), revisar su documentación OpenAPI en `localhost:800{1,2,3}/docs` — son la fuente de verdad, no asumir el esquema de memoria.
-- Cada endpoint nuevo: actualizar también `CLAUDE.md` si cambia algún contrato, el lenguaje ubicuo o la frontera de responsabilidad.
-- El servicio nunca lee ni escribe las bases de datos de `users`, `channels` ni `messages` — solo sus APIs públicas o sus eventos.
+## API
+
+| Método | Ruta | Función |
+| --- | --- | --- |
+| POST | `/api/v1/channels/{channel_id}/summaries` | Solicitar un resumen → `202` + `summary_id` + `Location` |
+| GET | `/api/v1/summaries/{summary_id}` | Estado y contenido (polling; no llama al núcleo) |
+| GET | `/api/v1/channels/{channel_id}/summaries?limit&offset` | Listar resúmenes del canal (limit 1–1000) |
+| GET | `/api/v1/channels/{channel_id}/summaries/latest` | Último resumen **completado** (404 si no hay) |
+| GET | `/api/v1/events?limit&offset` | Eventos durables del servicio, más antiguos primero |
+| GET | `/health` | Liveness |
+
+```bash
+# Solicitar (cuerpo opcional: user_id y/o timeInterval con zona horaria; el intervalo es [start, end))
+curl -i -X POST http://localhost:8004/api/v1/channels/CHANNEL_ID/summaries \
+  -H 'Content-Type: application/json' -d '{"user_id":"USER_ID"}'
+# Polling hasta messageState = completada | fallida
+curl http://localhost:8004/api/v1/summaries/SUMMARY_ID
+```
+
+`messageState`: `pendiente` → `procesando` → `completada` | `fallida` (con `error` legible). Errores: `{"detail": "..."}` con 404 (canal/resumen), 422 (usuario inexistente o datos inválidos; los de FastAPI traen una lista en `detail`), 409, 502/503 (núcleo o almacenamiento) y 500 genérico sin detalles internos.
+
+**Ventana enviada al LLM:** como máximo 7 días hacia atrás desde el fin de la ventana, 500 mensajes y 400 000 caracteres, siempre desde los más recientes. Lo omitido se anota al final del resumen y queda registrado en el digest; los mensajes omitidos de un resumen incremental se dan por cubiertos.
+
+### Resumen automático
+
+El Gateway (o cualquier productor) publica `chat.channel.entered` en el exchange durable `gateway` con `channel_id`, `user_id` y `entry_id` (contrato en `docs/REFERENCIA.md`). Si los mensajes sin resumir de los últimos 7 días superan `MESSAGE_THRESHOLD` (50 no dispara; 51 sí), se crea una solicitud normal. Hay a lo sumo una solicitud automática activa por canal y repetir un `entry_id` no abre otra. Para probarlo sin Gateway:
+
+```bash
+docker compose exec summaries python -m app.tools.publish_channel_entered CHANNEL_ID USER_ID [ENTRY_ID]
+```
+
+## Eventos
+
+| Evento | Dirección | Notas |
+| --- | --- | --- |
+| `chat.message.created` | Consume (exchange `chat`, no durable) | Mantiene el historial local |
+| `summary.requested` | Publica y consume (exchange `summaries`) | Outbox/inbox: solicitud y evento se guardan juntos |
+| `summary.generated` / `summary.failed` | Publica (exchange `summaries`) | Se guarda junto al estado final; sin el contenido del resumen |
+| `chat.channel.entered` | Consume (exchange `gateway`, durable) | Lo emite el Gateway |
+
+Formato del curso: `{type, subject_id, occurred_at, data}`; la routing key es el `type`. Entrega al menos una vez, con identidad estable por evento: un consumidor debe deduplicar por tipo + `summary_id`. Quien consuma los resultados declara su propia cola durable enlazada a `summary.generated`/`summary.failed`.
 
 ## Variables de entorno
 
-| Variable | Descripción |
-| --- | --- |
-| `MONGODB_URL` | Conexión a `summaries-mongodb` |
-| `MONGODB_DATABASE` | Base propia, por defecto `summaries` |
-| `MONGODB_TIMEOUT_MS` | Timeout de selección de servidor, conexión y socket; por defecto `5000` ms |
-| `USERS_URL` | Base URL del servicio `users` del núcleo |
-| `CHANNELS_URL` | Base URL del servicio `channels` del núcleo |
-| `MESSAGES_URL` | Base URL del servicio `messages` del núcleo |
-| `LLM_PROVIDER` | `mock` (default, resumen simulado) o `gemini` |
-| `LLM_API_KEY`, `LLM_MODEL`, `LLM_FALLBACK_MODEL` | Credencial (**solo en `.env`**) y modelos de Gemini (principal y de respaldo, p. ej. `gemini-3.5-flash-lite` y `gemini-3.8-flash`) |
-| `LLM_API_URL`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_MAX_WAIT_SECONDS` | Base de la API de Gemini, timeout (60) y espera máxima del reintento inmediato ante 429 (10) |
-| `LLM_MAX_DAYS`, `LLM_MAX_MESSAGES`, `LLM_MAX_INPUT_CHARS` | Límites de la ventana enviada al LLM: 7 días, 500 mensajes, 400000 caracteres |
-| `WORKER_POLL_SECONDS`, `WORKER_RETRY_SECONDS`, `WORKER_LEASE_SECONDS`, `WORKER_MAX_ATTEMPTS` | Worker de generación: sondeo de respaldo (5), espera entre reintentos (5), lease (120) e intentos (3) |
-| `BROKER_URL` | Conexión al broker de eventos |
-| `OUTBOX_POLL_SECONDS` | Sondeo de respaldo de la outbox (default 5); la publicación normal ocurre por aviso |
-| `BROKER_TIMEOUT_SECONDS` | Timeout de conexión/bloqueo AMQP; por defecto `2` s |
-| `BROKER_RETRY_SECONDS` | Espera entre reconexiones o reintentos por Mongo caído; por defecto `1` s |
-| `CORE_TIMEOUT_SECONDS` | Timeout HTTP al núcleo; por defecto `2` s |
-| `LLM_API_KEY` | Credencial del proveedor LLM, cuando se implemente el cliente |
-| `LLM_TIMEOUT_SECONDS` | Timeout LLM; por defecto `60` s |
-| `MESSAGE_THRESHOLD` | Umbral automático; por defecto `50`; el disparo será con **más de** ese valor |
+`docker-compose.yaml` carga `.env.example` (valores por defecto) y luego `.env` (opcional, para secretos y cambios locales).
 
-Compose carga `.env.example` (valores por defecto versionados) y después `.env` si existe, que lo sobrescribe: crea `.env` (ignorado por git) para secretos como `LLM_API_KEY`. MONGODB_URL se fija siempre al contenedor propio; BROKER_URL admite override desde el entorno o `.env`, con default summaries-rabbitmq. Con `LLM_PROVIDER=mock` el resumen es simulado (determinista); para Gemini crea `.env` con `LLM_PROVIDER=gemini`, `LLM_API_KEY`, `LLM_MODEL` y `LLM_FALLBACK_MODEL`; no versionar credenciales reales.
-
-## Uso de la API
-
-Con IDs reales del núcleo, `curl` (o `curl.exe` en PowerShell):
-
-```bash
-curl -i -X POST http://localhost:8004/api/v1/channels/CHANNEL_ID/summaries -H 'Content-Type: application/json' -d '{"user_id":"USER_ID"}'
-curl http://localhost:8004/api/v1/summaries/SUMMARY_ID
-curl 'http://localhost:8004/api/v1/channels/CHANNEL_ID/summaries?limit=20&offset=0'
-curl http://localhost:8004/api/v1/channels/CHANNEL_ID/summaries/latest
-```
-
-POST acepta cuerpo vacío, usuario opcional y `timeInterval` con start/end ISO8601 y zona. Devuelve summary_id/messageState y Location. El listado devuelve una lista, con limit 1–1000 y offset ≥ 0. latest devuelve solo completados, o 404. Polling por ID no llama al núcleo; listado/latest validan canal. Errores mantienen `{"detail": ...}` y están declarados en OpenAPI.
+| Variable | Default | Descripción |
+| --- | --- | --- |
+| `MONGODB_URL`, `MONGODB_DATABASE`, `MONGODB_TIMEOUT_MS` | contenedor propio, `summaries`, `5000` | Base propia |
+| `BROKER_URL` | `amqp://summaries-rabbitmq:5672` | RabbitMQ compartido con `messages` |
+| `BROKER_TIMEOUT_SECONDS`, `BROKER_RETRY_SECONDS` | `2`, `1` | Timeout y espera entre reconexiones |
+| `OUTBOX_POLL_SECONDS` | `5` | Respaldo del aviso inmediato de la outbox |
+| `USERS_URL`, `CHANNELS_URL`, `MESSAGES_URL`, `CORE_TIMEOUT_SECONDS` | `http://{users,channels,messages}:8000`, `2` | Núcleo del chat |
+| `LLM_PROVIDER` | `mock` | `mock` o `gemini` |
+| `LLM_API_KEY`, `LLM_MODEL`, `LLM_FALLBACK_MODEL` | — | Gemini (la key **solo en `.env`**) |
+| `LLM_API_URL`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_MAX_WAIT_SECONDS` | API de Google, `60`, `10` | Endpoint, timeout y espera máxima del reintento ante 429 |
+| `LLM_MAX_DAYS`, `LLM_MAX_MESSAGES`, `LLM_MAX_INPUT_CHARS` | `7`, `500`, `400000` | Límites de la ventana |
+| `WORKER_POLL_SECONDS`, `WORKER_RETRY_SECONDS`, `WORKER_LEASE_SECONDS`, `WORKER_MAX_ATTEMPTS` | `5`, `5`, `120`, `3` | Worker; el lease debe superar `LLM_TIMEOUT_SECONDS` |
+| `MESSAGE_THRESHOLD` | `50` | El disparo automático es con **más de** este valor |
 
 ## Pruebas
 
-Requieren solo Docker; el compose de pruebas levanta Mongo/RabbitMQ aislados. No necesitan chat base, LLM ni Python instalado en el host. Desde `summaries-service/`:
+Solo requieren Docker (levantan su propio Mongo y RabbitMQ aislados; el núcleo y Gemini se simulan, así que no usan cuota). Desde `summaries-service/`:
 
 ```bash
 docker compose -p summaries-tests -f compose.test.yaml up --build --abort-on-container-exit --exit-code-from tests --attach tests
 docker compose -p summaries-tests -f compose.test.yaml down -v
 ```
 
-El primer comando retorna el resultado de pytest; el segundo limpia solo el stack de pruebas. Mongo/RabbitMQ reales y HTTP simulado con MockTransport, sin modificar el núcleo.
+**227 pruebas aprobadas.** Cubren API y errores, persistencia y concurrencia, ventanas (más de 1000 mensajes, tardíos, límites), outbox/inbox con RabbitMQ real, worker (lease, reintentos, recuperación), adaptador de Gemini, eventos de resultado, resumen automático y respuestas públicas.
 
-Alternativa con Python **3.12**: instalar requirements-test.txt, definir TEST_MONGODB_URL y TEST_BROKER_URL para instancias aisladas y ejecutar `python -m pytest -q tests`. Las pruebas de infraestructura fallan explícitamente si faltan esas variables.
+## Resiliencia verificada con la pila real
 
-Verificación actual: **166 pruebas aprobadas**. Incluyen REST → Mongo → RabbitMQ → bandeja recibida, publicación fallida/recuperación, mensajes inválidos, ack/requeue, replays, ventanas de más de 1000 mensajes y tardíos durante una generación. Los avisos de deprecación de Starlette/Pika no afectan el resultado.
+| Escenario | Resultado |
+| --- | --- |
+| RabbitMQ caído al pedir resúmenes | `202`, quedan `pendiente`; al volver el broker se completan solos (~4 s) |
+| RabbitMQ recreado (contenedor nuevo, mismo volumen) | La solicitud en vuelo se completa |
+| Mongo caído | `POST`/`GET` responden `503`, `/health` sigue ok; al volver, el servicio se recupera sin reiniciar |
+| Reinicio del servicio con solicitudes pendientes y broker caído | Al volver el broker se completan todas |
+| Worker caído a mitad de una generación | El lease vence, otro worker retoma; no se repite la llamada al LLM si el digest ya estaba guardado |
+| Evento duplicado / inválido | Duplicado: un solo efecto. Inválido: cola de errores |
 
-También se verificó la persistencia al recrear Mongo/FastAPI, la conexión de messages al broker compartido y la conservación de una cola/mensaje persistentes al recrear RabbitMQ, con reconexión de consumidores. Historial vacío no valida existencia del canal: usar get_channel.
+## Estructura
 
-## Próximos pasos hasta la entrega final
+```text
+summaries-service/
+├── CLAUDE.md, README.md, INSTRUCCIONES.md, docs/REFERENCIA.md
+├── Dockerfile                 # usuario no root, healthcheck, sin --reload
+├── docker-compose.yaml        # servicio + Mongo + RabbitMQ (red externa microsvcs)
+├── docker-compose.dev.yaml    # override de desarrollo (código montado, --reload)
+├── compose.test.yaml, Dockerfile.test, requirements*.txt
+├── tests/
+└── app/
+    ├── main.py                # lifespan, health, events
+    ├── config.py, models.py, errors.py
+    ├── repository.py          # PyMongo: summaries, digests, checkpoints, mensajes, entradas
+    ├── services.py            # solicitudes, ventanas, entradas a canales
+    ├── worker.py              # generación con lease, reintentos y recuperación
+    ├── events.py              # RabbitMQ: consumo, outbox, topología
+    ├── routes/summaries.py    # endpoints REST
+    ├── clients/               # core_client (users/channels/messages), llm_client (mock, Gemini)
+    └── tools/publish_channel_entered.py
+```
 
-| Etapa | Implementación | Criterio de aceptación |
-| --- | --- | --- |
-| 1 — completada | Esqueleto FastAPI, Docker y configuración | Servicio disponible en 8004 y contratos OpenAPI declarados |
-| 2 — completada | Modelos y repositorio Mongo propio | Cuatro colecciones, índices, idempotencia y concurrencia verificadas |
-| 3 — completada | Cliente HTTP del núcleo | Contratos verificados, conexiones compartidas, timeout y errores 404/422/502/503; sin DB ajenas |
-| 4 — completada | Ventanas y reconstrucción por API | Ventanas completas/paginadas, snapshot fijo y cobertura de mensajes tardíos |
-| 5 — completada | REST y polling | POST 202 durable, GET local, listado paginado y latest completado |
-| 6 — completada | RabbitMQ y consumo continuo | Broker compartido, outbox/inbox requested, ack manual, replays y cola de errores |
-| 7 — siguiente | Worker y LLM HTTP | Resúmenes reales, fallas explícitas y recuperación de trabajos |
-| 8 | Eventos de resultado fiables | generated/failed durables y notificables al Gateway |
-| 9 | Entrada automática por Gateway | Evento de entrada, umbral estricto y deduplicación por canal |
-| 10 | Integración y entrega | End2end real, resiliencia y repositorio público documentado |
+## Flujo de trabajo
 
-### Paso 7 — worker y LLM HTTP
-
-- Crear un worker independiente del hilo RabbitMQ. Leer received_requests de Mongo y reclamar cada pendiente con exclusión mutua; el consumo del historial debe continuar mientras el LLM responde.
-- Implementar lease/ownership para recuperar procesando tras una caída y evitar que un worker vencido confirme resultados. Reutilizar el snapshot guardado y cualquier digest ya persistido; no volver a llamar al LLM si el resultado existe.
-- Completar llm_client.py: proveedores detrás de `LLMRequest` (mock y Gemini hechos), credencial opcional, timeout y validación de contenido no vacío. Resolver nombres de autores con caché; el prompt debe priorizar decisiones, eventos y responsables de tareas sin inventar información.
-- Usar el contrato HTTP propuesto en REFERENCIA.md y agregar el mock al compose de pruebas. La entrega final debe poder apuntar a una API real; el mock no será el proveedor de producción.
-- Guardar digest → completar summary → confirmar cobertura incremental/checkpoint. Ventanas por intervalo no consumen la cobertura del canal. Ventana vacía, errores de proveedor o respuesta inválida deben terminar en fallida con una explicación consultable por polling.
-- Para conversaciones que superen el contexto del proveedor, procesar partes sin truncar mensajes silenciosamente y producir un digest final por solicitud. Persistir avances necesarios para recuperar una ejecución interrumpida.
-
-**Se acepta cuando:** POST sigue sin esperar al LLM, polling alcanza completada/fallida, contenido y cobertura coinciden con el snapshot, y reinicios/concurrencia no producen dos confirmaciones ni pierden mensajes.
-
-### Paso 8 — eventos de resultado y entrega fiable
-
-- Extender la outbox existente a summary.generated y summary.failed; guardar el evento junto al cambio terminal del summary, en una escritura del mismo documento.
-- Publicar desde el hilo RabbitMQ con mensajes persistentes, confirmación y reintento. Mantener una identidad estable por evento y aceptar entrega al menos una vez; el consumidor debe deduplicar sus efectos.
-- Recuperar las confirmaciones de cobertura pendientes si el proceso cae entre Mongo y la publicación. Una falla del broker no debe borrar un resumen completado ni volver a invocar al LLM.
-- Hacer que GET /api/v1/events recupere los eventos durables después de reiniciar. Registrar intentos/errores de entrega para diagnóstico.
-
-**Estado: implementado.** Ver el contrato en `docs/REFERENCIA.md` (Eventos terminales).
-
-**Se acepta cuando:** cada resumen terminal produce su evento correcto, una caída en cada punto de confirmación se recupera, y un Gateway consumidor puede recibir el resultado sin consultar bases ajenas.
-
-### Paso 9 — entrada al canal publicada por Gateway
-
-- Implementar/conectar el Gateway: al entrar un usuario a un canal publicará chat.channel.entered con channel_id, user_id y entry_id. El contrato propuesto está en REFERENCIA.md; ese evento todavía no se consume.
-- Agregar una cola durable propia para entradas. Validar referencias y deduplicar por entry_id; no reutilizar las colas de otros servicios.
-- Antes de comprobar el umbral, reconciliar por la API pública para recuperar eventos que el núcleo no haya publicado. Incluir en messages_since los tardíos aún sin cobertura.
-- Si messages_since **> MESSAGE_THRESHOLD**, crear una solicitud automática por la misma orquestación durable del POST. Con 50 mensajes y umbral 50 no se genera; con 51, sí.
-- Evitar más de una solicitud automática activa por canal aunque entren varios usuarios a la vez. Reintentar una entrada duplicada no debe abrir otra solicitud; liberar/recuperar la exclusión al completar, fallar o vencer su lease.
-- El Gateway consumirá generated/failed para avisar al cliente; el contenido final sigue consultándose por GET/polling. Las solicitudes manuales con timeInterval mantienen su independencia del progreso incremental.
-
-**Se acepta cuando:** un evento real del Gateway inicia la generación solo al superar el umbral; entradas simultáneas/repetidas, mensajes tardíos y caídas no duplican solicitudes ni alteran resúmenes publicados.
-
-**Estado: implementado por el lado de summaries** (sin Gateway: se prueba con `python -m app.tools.publish_channel_entered`). Contrato, flujo y exclusión en `docs/REFERENCIA.md`.
-
-### Paso 10 — integración, resiliencia y entrega
-
-- Probar el recorrido con chat base, broker compartido, Gateway y una API LLM real configurada: crear conversación, pedir un intervalo y verificar contenido; luego superar el umbral y entrar al canal para verificar la generación automática.
-- Cubrir desconexión/recreación de RabbitMQ, Mongo temporalmente caído, reinicio del worker durante una llamada, eventos duplicados/inválidos, timeouts LLM y canales que requieren varias partes.
-- Verificar que usuarios/canales inexistentes no crean solicitudes, que solo se usan APIs/eventos del núcleo y que las respuestas públicas no exponen metadatos internos ni credenciales.
-- Actualizar ejemplos reproducibles, variables reales de despliegue, diagramas y límites operativos. Preparar rama estable, PR y repositorio público según las reglas de entrega; no incluir secretos.
-
-**Se acepta cuando:** todo el flujo manual y automático funciona con componentes reales, las pruebas de resiliencia pasan y otra persona puede reproducirlo siguiendo el README.
-
-## Decisiones de arquitectura resueltas por el usuario
-
-| Tema | Elección | Estado |
-| --- | --- | --- |
-| Broker | summaries-rabbitmq compartido con messages | Configurado y conexión comprobada |
-| LLM | API HTTP configurable + mock solo para pruebas | Elegido; implementación en paso 7 |
-| Entrada al canal | Evento publicado por un Gateway | Elegido; integración en paso 9 |
-| Mensajes tardíos | Próximo incremental, sin reescribir resúmenes publicados | Implementado y probado |
-
-Para el despliegue final faltarán la URL/credencial de la API LLM real y el Gateway que emitirá la entrada. Estas configuraciones no cambian las decisiones elegidas.
+- `main` es la rama estable; el trabajo va en ramas `feature/<nombre>` con PR contra `main`.
+- Antes de tocar un contrato con el núcleo, revisar su OpenAPI en `localhost:800{1,2,3}/docs`.
+- Si cambia un contrato, el lenguaje ubicuo o la frontera de responsabilidad, actualizar `CLAUDE.md`.
+- El servicio nunca lee ni escribe las bases de `users`, `channels` ni `messages`.

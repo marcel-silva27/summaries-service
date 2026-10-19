@@ -1,4 +1,6 @@
 """Errores explícitos del servicio, con el formato {"detail": ...} del curso."""
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
@@ -46,6 +48,9 @@ class SummaryStateConflict(PersistenceConflict):
     detail = "Summary state does not allow this operation"
 
 
+logger = logging.getLogger(__name__)
+
+
 def register_handlers(app: FastAPI) -> None:
     @app.exception_handler(ServiceError)
     async def service_error_handler(_: Request, exc: ServiceError):
@@ -54,3 +59,9 @@ def register_handlers(app: FastAPI) -> None:
     @app.exception_handler(PyMongoError)
     async def mongo_error_handler(_: Request, exc: PyMongoError):
         return JSONResponse(status_code=503, content={"detail": "Summary storage unavailable"})
+
+    @app.exception_handler(Exception)
+    async def unexpected_error_handler(request: Request, exc: Exception):
+        # Sin detalles internos en la respuesta; el diagnóstico queda en el log.
+        logger.error("Unhandled error in %s %s", request.method, request.url.path, exc_info=exc)
+        return JSONResponse(status_code=500, content={"detail": "Internal error"})

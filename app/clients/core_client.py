@@ -124,19 +124,3 @@ def get_core_client(request: Request) -> CoreClient:
 
 
 CoreClientDependency = Annotated[CoreClient, Depends(get_core_client)]
-
-
-# Compatibilidad con las funciones declaradas en el esqueleto; uso puntual fuera de FastAPI.
-def get_channel(channel_id: str) -> dict:
-    with CoreClient() as client:
-        return client.get_channel(channel_id)
-
-
-def get_user(user_id: str) -> dict:
-    with CoreClient() as client:
-        return client.get_user(user_id)
-
-
-def list_messages(channel_id: str) -> list[dict]:
-    with CoreClient() as client:
-        return client.list_messages(channel_id)

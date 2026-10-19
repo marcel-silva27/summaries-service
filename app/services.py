@@ -112,7 +112,10 @@ class SummaryService:
             last = page[-1]
             after = Checkpoint(channel_id=summary.channel_id,
                                last_message_id=last.id, last_message_at=last.created_at)
-        messages, omitted = limit_window(messages, interval.end if interval else summary.created_at)
+        # La antigüedad máxima se cuenta hacia atrás desde el fin de la ventana, sin pasar del momento
+        # de la solicitud: un intervalo que termina en el futuro no debe correr el límite.
+        reference = min(interval.end, summary.created_at) if interval else summary.created_at
+        messages, omitted = limit_window(messages, reference)
         if interval is None and messages:
             interval = TimeInterval(start=messages[0].created_at, end=summary.created_at)
         snapshot = self.repository.save_window(summary.id, [message.id for message in messages], interval,

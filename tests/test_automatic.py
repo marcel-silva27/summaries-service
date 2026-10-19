@@ -302,3 +302,12 @@ def test_invalid_gateway_events_are_dead_lettered_instead_of_stored(repository, 
                                   body=json.dumps(event).encode())
         _wait(lambda: channel.queue_declare(queue=broker.errors_queue, passive=True).method.message_count == 3)
     assert repository.entries.count_documents({}) == 0
+
+
+def test_an_interval_ending_in_the_future_does_not_shift_the_age_limit(repository, core):
+    from app.models import TimeInterval
+    seed(repository, core, messages(2))  # Hace unas horas: dentro de los 7 días.
+    interval = TimeInterval(start=utc_now() - timedelta(days=30), end=utc_now() + timedelta(days=3650))
+    summary = repository.create_summary("channel", SummaryRequest(timeInterval=interval))
+    window = worker_for(repository, core).service.build_window(summary.id)
+    assert len(window.messages) == 2 and window.omitted == 0
