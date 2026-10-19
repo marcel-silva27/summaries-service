@@ -183,7 +183,16 @@ Abiertos, por prioridad:
 - El prompt prohíbe convertir días relativos en fechas (una prueba inicial lo hizo) y pide responder sin introducción.
 - Las llamadas de prueba con datos reales envían los mensajes a Google; en la capa gratuita pueden usarse para mejorar sus modelos: usar datos ficticios.
 
-### Pendiente del paso 7
-- Prueba de extremo a extremo con el chat base real y Gemini (hoy solo se verificó el adaptador por separado y el flujo con mock).
+### Prueba de extremo a extremo (2026-10-19) — paso 7 verificado
+Chat base (`docker compose -p demo`, override `RABBITMQ_URL`) + summaries con Gemini real (`gemini-3.5-flash-lite`). Resultados:
+- POST → 202 con `Location`; polling `pendiente → procesando → completada` en ~2 s; contenido con decisiones, eventos y tareas con responsables correctos; `latest` y listado coherentes.
+- Canal inexistente → 404; usuario inexistente → 422; intervalo sin mensajes → `fallida` ("No hay mensajes en la ventana solicitada") sin llamar al LLM.
+- Incremental: el 2º resumen solo cubrió el mensaje nuevo (digest de 1 mensaje); el de `timeInterval` no tocó el checkpoint. Al final: 0 mensajes sin cobertura, 0 `_coverage_pending`, sin errores en logs.
+- El evento `chat.message.created` (publicado a mano en el exchange `chat`) llegó al historial local.
+
+**Bug del demo del curso (no de este servicio):** en `users`, `channels` y `messages`, `insert_one(dict)` agrega `_id` (ObjectId) al mismo dict que luego se devuelve/publica. Resultado: todos los `POST` de creación responden **500 aunque el dato queda guardado**, y `messages` falla en `json.dumps(event)` **antes de publicar**, así que con el demo tal cual **nunca se emite `chat.message.created`** (el ObjectId no es serializable). Existe igual en el repo remoto (`main`). Consecuencias: (1) para probar hay que tolerar el 500 y obtener los IDs desde los GET/listados (los usuarios no tienen listado: se leyeron de su Mongo solo para preparar la prueba); (2) la reconciliación por `GET .../messages` de `build_window` es imprescindible, no un respaldo menor; (3) para ejercitar el camino por eventos hay que publicar `chat.message.created` a mano en el exchange `chat` (no durable). No se modificaron archivos del curso; conviene avisar al profesor.
+- Al bajar el chat con `docker compose -p demo down` desaparece la red `microsvcs` (la crea ese proyecto); los volúmenes se conservan.
+
+### Pendiente tras el paso 7
 - El evento terminal (`summary.generated` / `summary.failed`) es del paso 8: el worker aún no publica nada al terminar.
 - Un resumen incremental cuyos mensajes pendientes sean todos más antiguos que 7 días termina `fallida` y no avanza el checkpoint; revisar en el paso 9 para evitar reintentos repetidos por el umbral.
