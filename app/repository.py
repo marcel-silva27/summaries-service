@@ -3,7 +3,8 @@
 Invocar desde endpoints def o desde un hilo si el llamador es asíncrono.
 La orquestación y la publicación de eventos pertenecen a las siguientes etapas.
 """
-from typing import Annotated, Callable, TypeVar
+from datetime import timedelta
+from typing import Annotated, Callable, NamedTuple, TypeVar
 
 from bson.codec_options import CodecOptions
 from fastapi import Depends, Request
@@ -26,7 +27,8 @@ def _decode(model: type[Model], document: dict | None) -> Model | None:
     if document is None:
         return None
     return model.model_validate({key: value for key, value in document.items()
-                                if key not in ("_id", "_request_delivery", "_history", "_window")})
+                                if key not in ("_id", "_request_delivery", "_history", "_window",
+                                               "_lease", "_attempts", "_coverage_pending")})
 
 
 def _document(model: DomainModel) -> dict:
@@ -41,6 +43,11 @@ def _after_cursor(checkpoint: Checkpoint) -> dict:
         {"created_at": {"$gt": checkpoint.last_message_at}},
         {"created_at": checkpoint.last_message_at, "id": {"$gt": checkpoint.last_message_id}},
     ]}
+
+
+class Claim(NamedTuple):
+    summary: Summary
+    attempts: int
 
 
 class MongoRepository:
@@ -117,6 +124,49 @@ class MongoRepository:
                                       "messageState": MessageState.pendiente}).sort(CHRONOLOGICAL).limit(limit)
         return [_decode(Summary, document) for document in cursor]
 
+    def claim_summary(self, owner: str, lease_seconds: float) -> Claim | None:
+        """Reclamar la solicitud recibida más antigua: pendiente, o procesando con lease vencido.
+
+        Cada reclamo cuenta un intento. Solo el dueño del lease puede confirmar el resultado.
+        """
+        now = utc_now()
+        document = self.summaries.find_one_and_update(
+            {"_request_delivery.received": True,
+             "$or": [{"messageState": MessageState.pendiente},
+                     {"messageState": MessageState.procesando, "_lease.expires_at": {"$lt": now}}]},
+            {"$set": {"messageState": MessageState.procesando,
+                      "_lease": {"owner": owner, "expires_at": now + timedelta(seconds=lease_seconds)}},
+             "$inc": {"_attempts": 1}, "$max": {"updated_at": now}},
+            sort=CHRONOLOGICAL, return_document=ReturnDocument.AFTER)
+        if document is None:
+            return None
+        if document.get("timeInterval") is None:
+            # Un resumen incremental debe confirmar cobertura aunque el proceso caiga tras completarlo.
+            self.summaries.update_one({"id": document["id"], "_lease.owner": owner},
+                                      {"$set": {"_coverage_pending": True}})
+        return Claim(_decode(Summary, document), document["_attempts"])
+
+    def renew_lease(self, summary_id: str, owner: str, lease_seconds: float) -> bool:
+        result = self.summaries.update_one(
+            {"id": summary_id, "messageState": MessageState.procesando, "_lease.owner": owner},
+            {"$set": {"_lease.expires_at": utc_now() + timedelta(seconds=lease_seconds)}})
+        return result.matched_count == 1
+
+    def release_summary(self, summary_id: str, owner: str) -> bool:
+        """Devolver a pendiente (falla transitoria); el intento ya quedó contado."""
+        document = self.summaries.find_one_and_update(
+            {"id": summary_id, "messageState": MessageState.procesando, "_lease.owner": owner},
+            {"$set": {"messageState": MessageState.pendiente}, "$unset": {"_lease": ""},
+             "$max": {"updated_at": utc_now()}})
+        return document is not None
+
+    def pending_coverage(self, *, limit: int = 100) -> list[Summary]:
+        """Resúmenes incrementales completados cuya cobertura aún no se confirmó."""
+        self._pagination(limit, 0)
+        cursor = self.summaries.find({"messageState": MessageState.completada, "_coverage_pending": True,
+                                      "timeInterval": None}).sort(CHRONOLOGICAL).limit(limit)
+        return [_decode(Summary, document) for document in cursor]
+
     def get_summary(self, summary_id: str) -> Summary:
         summary = _decode(Summary, self.summaries.find_one({"id": summary_id}))
         if summary is None:
@@ -139,28 +189,31 @@ class MongoRepository:
         """Compare-and-set: solo un worker puede reclamar pendiente → procesando."""
         return self._transition(summary_id, [MessageState.pendiente], MessageState.procesando)
 
-    def complete_summary(self, summary_id: str) -> Summary:
+    def complete_summary(self, summary_id: str, owner: str | None = None) -> Summary:
         """Primero se guarda el digest; después se confirma el resultado público."""
         digest = self.get_digest_for_summary(summary_id)
         if digest is None:
             self.get_summary(summary_id)
             raise PersistenceConflict("A persisted digest is required to complete a summary")
         return self._transition(summary_id, [MessageState.procesando], MessageState.completada,
-                                content=digest.content, error=None)
+                                owner=owner, content=digest.content, error=None)
 
-    def fail_summary(self, summary_id: str, error: str) -> Summary:
+    def fail_summary(self, summary_id: str, error: str, owner: str | None = None) -> Summary:
         if not error or not error.strip():
             raise ValueError("A failure needs a non-empty error")
         return self._transition(summary_id, [MessageState.pendiente, MessageState.procesando],
-                                MessageState.fallida, error=error, content=None)
+                                MessageState.fallida, owner=owner, error=error, content=None)
 
     def _transition(self, summary_id: str, expected: list[MessageState], target: MessageState,
-                    **values) -> Summary:
+                    *, owner: str | None = None, **values) -> Summary:
         # $max evita retroceder updated_at incluso si el reloj local se corrige.
-        document = self.summaries.find_one_and_update(
-            {"id": summary_id, "messageState": {"$in": expected}},
-            {"$set": {"messageState": target, **values}, "$max": {"updated_at": utc_now()}},
-            return_document=ReturnDocument.AFTER)
+        query = {"id": summary_id, "messageState": {"$in": expected}}
+        if owner is not None:
+            query["_lease.owner"] = owner  # Un worker con lease vencido no confirma resultados.
+        update = {"$set": {"messageState": target, **values}, "$max": {"updated_at": utc_now()}}
+        if target in (MessageState.completada, MessageState.fallida):
+            update["$unset"] = {"_lease": ""}
+        document = self.summaries.find_one_and_update(query, update, return_document=ReturnDocument.AFTER)
         if document is not None:
             return _decode(Summary, document)
         current = self.get_summary(summary_id)
@@ -179,6 +232,7 @@ class MongoRepository:
         if window is not None:
             ids = window["message_ids"]
             if (not ids or digest.message_count != len(ids) or digest.first_message_id != ids[0]
+                    or digest.omitted_count != len(window.get("omitted_ids", []))
                     or digest.last_message_id != ids[-1]
                     or digest.timeInterval != TimeInterval.model_validate(window["timeInterval"])):
                 raise PersistenceConflict("Digest does not match the persisted message window")
@@ -307,8 +361,9 @@ class MongoRepository:
             raise SummaryNotFound()
         return document.get("_window")
 
-    def save_window(self, summary_id: str, message_ids: list[str], interval: TimeInterval | None) -> dict:
-        window = {"message_ids": message_ids,
+    def save_window(self, summary_id: str, message_ids: list[str], interval: TimeInterval | None,
+                    omitted_ids: list[str] | None = None) -> dict:
+        window = {"message_ids": message_ids, "omitted_ids": omitted_ids or [],
                   "timeInterval": interval.model_dump(mode="python") if interval else None}
         document = self.summaries.find_one_and_update(
             {"id": summary_id, "_window": {"$exists": False},
@@ -334,7 +389,10 @@ class MongoRepository:
         channel_id = summary.channel_id
         window = self.get_window(summary_id)
         # Sin snapshot legado solo se conoce con certeza la cobertura de los extremos del digest.
-        ids = window["message_ids"] if window is not None else [digest.first_message_id, digest.last_message_id]
+        # Los omitidos por los límites de ventana también se dan por cubiertos: si no, el umbral
+        # automático volvería a dispararse por mensajes que nunca se resumirán.
+        ids = (window["message_ids"] + window.get("omitted_ids", []) if window is not None
+               else [digest.first_message_id, digest.last_message_id])
         for offset in range(0, len(ids), 1000):
             self.messages.update_many({"channel_id": channel_id, "id": {"$in": ids[offset:offset + 1000]}},
                                       {"$set": {"_history.covered": True}})
@@ -351,6 +409,7 @@ class MongoRepository:
             ]},
             {"$set": {"last_message_at": digest.last_message_at,
                       "last_message_id": digest.last_message_id, "last_summary_id": summary_id}})
+        self.summaries.update_one({"id": summary_id}, {"$unset": {"_coverage_pending": ""}})
         return self.get_checkpoint(channel_id)
 
     @staticmethod

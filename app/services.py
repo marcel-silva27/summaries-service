@@ -1,9 +1,11 @@
 """Ventanas del historial y orquestación de solicitudes; sin llamadas al LLM."""
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Annotated, Callable
 
 from fastapi import Depends, Request
 
+from . import config
 from .clients.core_client import CoreClient, CoreClientDependency
 from .events import make_event, record_event
 from .errors import PersistenceConflict
@@ -16,6 +18,7 @@ class MessageWindow:
     messages: tuple[LocalMessage, ...]
     time_interval: TimeInterval | None
     checkpoint: Checkpoint
+    omitted: int = 0
 
 
 class SummaryService:
@@ -79,9 +82,11 @@ class SummaryService:
             last = page[-1]
             after = Checkpoint(channel_id=summary.channel_id,
                                last_message_id=last.id, last_message_at=last.created_at)
+        messages, omitted = limit_window(messages, interval.end if interval else summary.created_at)
         if interval is None and messages:
             interval = TimeInterval(start=messages[0].created_at, end=summary.created_at)
-        snapshot = self.repository.save_window(summary.id, [message.id for message in messages], interval)
+        snapshot = self.repository.save_window(summary.id, [message.id for message in messages], interval,
+                                               [message.id for message in omitted])
         return self._window_from_snapshot(summary.channel_id, snapshot)
 
     def _window_from_snapshot(self, channel_id: str, snapshot: dict) -> MessageWindow:
@@ -89,7 +94,28 @@ class SummaryService:
         if any(message is None or message.channel_id != channel_id for message in messages):
             raise PersistenceConflict("Persisted window contains missing or unrelated messages")
         interval = TimeInterval.model_validate(snapshot["timeInterval"]) if snapshot["timeInterval"] else None
-        return MessageWindow(messages, interval, self.repository.get_checkpoint(channel_id))
+        return MessageWindow(messages, interval, self.repository.get_checkpoint(channel_id),
+                             len(snapshot.get("omitted_ids", [])))
+
+
+def limit_window(messages: list[LocalMessage], end) -> tuple[list[LocalMessage], list[LocalMessage]]:
+    """Aplicar los límites del LLM desde los mensajes más recientes: antigüedad, cantidad y tamaño.
+
+    Devuelve (conservados, omitidos), ambos en orden cronológico. Conserva siempre el más reciente
+    salvo que todos superen la antigüedad máxima.
+    """
+    cutoff = end - timedelta(days=config.LLM_MAX_DAYS)
+    kept: list[LocalMessage] = []
+    chars = 0
+    for message in reversed(messages):
+        if message.created_at < cutoff or len(kept) >= config.LLM_MAX_MESSAGES:
+            break
+        if kept and chars + len(message.content) > config.LLM_MAX_INPUT_CHARS:
+            break
+        kept.append(message)
+        chars += len(message.content)
+    kept.reverse()
+    return kept, messages[:len(messages) - len(kept)]
 
 
 def get_summary_service(request: Request, repository: RepositoryDependency,

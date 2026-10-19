@@ -15,9 +15,24 @@ CHANNELS_URL = os.environ.get("CHANNELS_URL", "http://channels:8000")
 MESSAGES_URL = os.environ.get("MESSAGES_URL", "http://messages:8000")
 CORE_TIMEOUT_SECONDS = float(os.environ.get("CORE_TIMEOUT_SECONDS", "2"))
 
-LLM_API_URL = os.environ.get("LLM_API_URL", "")
+# LLM: `mock` (desarrollo/pruebas) o `gemini` (se conecta al final del paso 7).
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "mock")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_MODEL = os.environ.get("LLM_MODEL", "")
+LLM_FALLBACK_MODEL = os.environ.get("LLM_FALLBACK_MODEL", "")
 LLM_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "60"))
+
+# Límites de la ventana enviada al LLM (lo que ocurra primero). Se aplican desde los mensajes
+# más recientes; lo omitido se registra en el digest, nunca se recorta en silencio.
+LLM_MAX_DAYS = int(os.environ.get("LLM_MAX_DAYS", "7"))
+LLM_MAX_MESSAGES = int(os.environ.get("LLM_MAX_MESSAGES", "500"))
+LLM_MAX_INPUT_CHARS = int(os.environ.get("LLM_MAX_INPUT_CHARS", "400000"))
+
+# Worker de generación. La concesión (lease) debe superar al timeout del LLM.
+WORKER_POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "5"))
+WORKER_RETRY_SECONDS = float(os.environ.get("WORKER_RETRY_SECONDS", "5"))
+WORKER_LEASE_SECONDS = float(os.environ.get("WORKER_LEASE_SECONDS", "120"))
+WORKER_MAX_ATTEMPTS = int(os.environ.get("WORKER_MAX_ATTEMPTS", "3"))
 
 MESSAGE_THRESHOLD = int(os.environ.get("MESSAGE_THRESHOLD", "50"))
 

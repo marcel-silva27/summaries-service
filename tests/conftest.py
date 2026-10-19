@@ -8,11 +8,21 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pymongo import MongoClient
 
+from app import config
 from app.repository import MongoRepository
 from app.clients.core_client import CoreClient
 from app.errors import register_handlers
 from app.events import EventBroker
 from app.routes.summaries import router
+
+
+@pytest.fixture(autouse=True)
+def unbounded_llm_window(monkeypatch):
+    # Los datos de prueba usan fechas fijas: sin esto, las pruebas caducarían con el reloj real.
+    # tests/test_worker.py restablece los límites reales donde los verifica.
+    monkeypatch.setattr(config, "LLM_MAX_DAYS", 36500)
+    monkeypatch.setattr(config, "LLM_MAX_MESSAGES", 10**9)
+    monkeypatch.setattr(config, "LLM_MAX_INPUT_CHARS", 10**12)
 
 
 @pytest.fixture(scope="session")

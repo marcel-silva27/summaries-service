@@ -95,6 +95,8 @@ class Digest(DomainModel):
     first_message_id: Identifier
     last_message_id: Identifier
     last_message_at: UTCDateTime
+    # Mensajes dejados fuera por los límites de ventana (7 días / 500 mensajes / tamaño).
+    omitted_count: int = Field(default=0, ge=0)
     created_at: UTCDateTime = Field(default_factory=utc_now)
 
     @field_validator("content")

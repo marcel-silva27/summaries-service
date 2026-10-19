@@ -288,21 +288,13 @@ Referencias: [Pika 1.3.2, BlockingConnection](https://pika.readthedocs.io/en/1.3
 
 Estas interfaces orientan los pasos 7–9; **todavía no están implementadas**. El usuario eligió HTTP para LLM y eventos de Gateway para la entrada.
 
-### LLM HTTP — paso 7
+### LLM — paso 7 (implementado con mock; Gemini pendiente)
 
-POST `LLM_API_URL/generate`, timeout LLM_TIMEOUT_SECONDS y `Authorization: Bearer LLM_API_KEY` si hay credencial. Enviar summary_id como clave de idempotencia cuando el adaptador/proveedor la soporte.
+`app/clients/llm_client.py` define el contrato interno `LLMRequest` (summary_id, channel_id, messages con `author_name`, prompt) → texto, tras la interfaz `LLMProvider`. `LLM_PROVIDER=mock` (default) devuelve un resumen determinista y permite simular fallos con `[mock:fail]` (definitivo) y `[mock:retry]` (transitorio) en el contenido de un mensaje. `LLM_PROVIDER=gemini` falla al iniciar hasta que se implemente el adaptador (`generateContent`, key por cabecera, modelo principal `LLM_MODEL` y de respaldo `LLM_FALLBACK_MODEL`). Se descartó un proveedor de pago como respaldo.
 
-```json
-{
-  "summary_id": "summary-uuid",
-  "channel_id": "channel-uuid",
-  "timeInterval": {"start": "2026-10-18T15:00:00Z", "end": "2026-10-18T16:00:00Z"},
-  "messages": [{"id": "message-uuid", "author_id": "user-uuid", "author_name": "Ana", "content": "...", "created_at": "2026-10-18T15:10:00Z"}],
-  "prompt": "Resumir decisiones, eventos y tareas con sus responsables, usando solo los mensajes proporcionados."
-}
-```
+**Worker** (`app/worker.py`): hilo propio, despertado por aviso (`notify`, también al recibirse `summary.requested`) con sondeo de respaldo. Reclama con lease con dueño (`claim_summary`: pendiente, o procesando con lease vencido; cuenta intentos), renueva el lease antes de cada paso y solo el dueño vigente puede completar o fallar. Si ya existe un digest lo reutiliza sin llamar al LLM. Los resúmenes incrementales marcan `_coverage_pending` al reclamarse y la cobertura se confirma aunque el proceso caiga tras completar. Errores transitorios (núcleo no disponible, LLM `retryable`) devuelven la solicitud a pendiente hasta `WORKER_MAX_ATTEMPTS`; los definitivos (canal inexistente, ventana vacía, respuesta vacía, rechazo del proveedor) terminan `fallida` con el motivo visible por polling.
 
-Respuesta 200: `{"content":"Resumen no vacío"}`. El adaptador mapeará proveedores concretos a este contrato; el mock de pruebas seguirá el mismo. Falta configurar una URL/credencial reales. El worker usará el snapshot persistido y validará su resultado antes de construir el digest. Si un timeout ocurre después de enviar, la respuesta del proveedor puede ser incierta: lease y confirmación condicional protegen el estado local, pero una sola llamada externa requiere soporte de idempotencia del proveedor.
+**Límites de ventana** (`services.limit_window`, desde los mensajes más recientes): `LLM_MAX_DAYS` (7, contados hacia atrás desde el fin de la ventana), `LLM_MAX_MESSAGES` (500) y `LLM_MAX_INPUT_CHARS` (400000); siempre se conserva el mensaje más reciente salvo que todos superen los 7 días. Lo omitido se guarda en el snapshot (`omitted_ids`), en `Digest.omitted_count` y se anota al final del resumen. En resúmenes incrementales los omitidos **se dan por cubiertos** al avanzar el checkpoint (si no, el umbral automático se dispararía para siempre por mensajes que nunca se resumirán); en resúmenes por `timeInterval` no se toca la cobertura.
 
 ### Eventos terminales — paso 8
 
@@ -327,6 +319,6 @@ entry_id identificará una entrada y se conservará al reintentar. El servicio v
 
 ## Verificación actual de pasos 4–6
 
-166 pruebas con MongoDB 7/RabbitMQ reales y HTTP del núcleo simulado. Se verifican persistencia conjunta solicitud/evento, REST/polling, ventanas completas y límites, snapshot inmutable, tardíos antes/durante generación, digest incompatible, publicación fallida, reanudación, reconexión, colas independientes, deadletters y efectos idempotentes. También se verificó que el contenedor real de messages alcanza el broker compartido y que las colas de solicitudes/historial tienen sus consumidores activos.
+183 pruebas con MongoDB 7/RabbitMQ reales y HTTP del núcleo simulado. Se verifican persistencia conjunta solicitud/evento, REST/polling, ventanas completas y límites, snapshot inmutable, tardíos antes/durante generación, digest incompatible, publicación fallida, reanudación, reconexión, colas independientes, deadletters y efectos idempotentes. También se verificó que el contenedor real de messages alcanza el broker compartido y que las colas de solicitudes/historial tienen sus consumidores activos.
 
 Comprobación de volumen en desarrollo: una cola temporal durable con un mensaje delivery_mode=2 sobrevivió a la recreación de RabbitMQ. Se releyó el cuerpo, se eliminó únicamente esa cola de prueba y ambos consumidores del servicio volvieron a estar activos. Los archivos del núcleo y los datos del chat no se modificaron; RABBITMQ_URL se aplicó en ejecución según la decisión del usuario.

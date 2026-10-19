@@ -2,6 +2,7 @@
 import json
 import logging
 from math import isfinite
+from typing import Callable
 from datetime import datetime
 from threading import Event, Lock, Thread
 from time import monotonic
@@ -56,8 +57,10 @@ def publish(event_type: str, subject_id: str, data: dict) -> dict:
 
 class EventBroker:
     def __init__(self, repository: MongoRepository, *, url: str | None = None,
-                 queue_prefix: str = "summaries"):
+                 queue_prefix: str = "summaries", on_request_received: Callable[[], None] | None = None):
         self.repository = repository
+        # Despierta al worker cuando una solicitud queda recibida de forma durable.
+        self.on_request_received = on_request_received or (lambda: None)
         self.url = config.BROKER_URL if url is None else url
         self.history_queue = f"{queue_prefix}_for_chat_messages_queue"
         self.requests_queue = f"{queue_prefix}_for_summary_requested_queue"
@@ -177,6 +180,7 @@ class EventBroker:
                 self.repository.upsert_message(message)
             else:
                 self.repository.receive_summary_request(event.model_dump(mode="json"))
+                self.on_request_received()
         except PyMongoError:
             # La entrega sigue pendiente; esperar evita un requeue continuo durante una caída.
             logger.warning("Storage unavailable while consuming event", exc_info=True)

@@ -7,10 +7,12 @@ from starlette.concurrency import run_in_threadpool
 
 from . import config
 from .clients.core_client import CoreClient
+from .clients.llm_client import build_provider
 from .errors import register_handlers
 from .events import EventBroker, list_events as event_snapshot
 from .routes import summaries
 from .repository import MongoRepository
+from .worker import SummaryWorker
 
 
 @asynccontextmanager
@@ -27,13 +29,17 @@ async def lifespan(app: FastAPI):
         app.state.repository = repository
         with CoreClient() as core_client:
             app.state.core_client = core_client
-            broker = EventBroker(repository)
+            worker = SummaryWorker(repository, core_client, build_provider())
+            app.state.worker = worker
+            broker = EventBroker(repository, on_request_received=worker.notify)
             app.state.broker = broker
+            worker.start()
             broker.start()
             try:
                 yield
             finally:
                 await run_in_threadpool(broker.stop)
+                await run_in_threadpool(worker.stop)
     finally:
         client.close()
 
