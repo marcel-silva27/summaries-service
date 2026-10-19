@@ -305,9 +305,9 @@ Mismo envelope del curso (`type`, `subject_id`=summary_id, `occurred_at`, `data`
 - **Sin suscriptores:** los resultados se publican **sin `mandatory`**. Un consumidor (p. ej. el Gateway) debe declarar su propia cola durable y enlazarla a `summaries` con `summary.generated` / `summary.failed` (o `summary.*`); lo publicado antes de ese enlace no llega a la cola, pero sigue en `GET /api/v1/events` para ponerse al día.
 - **Recuperación:** si el proceso cae tras cambiar el estado y antes de publicar, el evento queda pendiente y se publica al reiniciar, sin repetir la llamada al LLM. La cobertura del checkpoint se recupera por separado (`_coverage_pending`).
 
-### Entrada del Gateway — paso 9
+### Entrada del Gateway — paso 9 (implementado por el lado de summaries)
 
-Propuesta: exchange gateway, topic/durable, routing key chat.channel.entered; cola durable propia de summaries. El emisor será el Gateway, que hoy no forma parte del demo 03.
+Contrato que debe cumplir el emisor (el Gateway, que no forma parte del demo 03): exchange `gateway` (topic, **durable**; declararlo distinto produce `PRECONDITION_FAILED`), routing key `chat.channel.entered`, envelope del curso con `subject_id` = `channel_id`.
 
 ```json
 {
@@ -318,7 +318,15 @@ Propuesta: exchange gateway, topic/durable, routing key chat.channel.entered; co
 }
 ```
 
-entry_id identificará una entrada y se conservará al reintentar. El servicio validará referencias, reconciliará mensajes y evaluará messages_since > MESSAGE_THRESHOLD. Una exclusión por canal impedirá dos solicitudes automáticas activas; deduplicar entry_id impedirá recrearlas por replay. El Gateway escuchará los resultados y el cliente podrá consultar el summary por polling. El plan de implementación y sus criterios están en README.
+`entry_id` identifica una entrada y **debe conservarse al reintentar** el evento. Un evento con `type`, routing key o `subject_id` incoherentes, o sin alguno de los tres campos (sin extras), va a la cola de errores y no se guarda.
+
+**Flujo:** el consumidor (cola durable propia `summaries_for_channel_entered_queue`, ack tras persistir) guarda la entrada en la colección `entries` (única por `entry_id`; repetir el evento no crea otra) y despierta al worker. El worker la evalúa: valida canal y usuario por API, reconcilia el historial por API y cuenta los mensajes **sin cobertura de la ventana** (creados en los últimos `LLM_MAX_DAYS`; los más antiguos no cuentan porque nunca entrarán a un resumen y dispararían la solicitud en cada entrada). Si ese número es **mayor que** `MESSAGE_THRESHOLD` (50 no dispara; 51 sí) crea una solicitud por la misma orquestación durable del POST (outbox, `summary.requested` con `trigger: "automatic"` y `entry_id` en `data`, `requested_by` = el usuario que entró) y desde ahí sigue el flujo normal.
+
+**Resultado de cada entrada** (`entries.outcome`): `requested`, `below_threshold`, `no_recent_messages`, `already_active`, `invalid_reference` (usuario o canal inexistente), `dependency_unavailable` (núcleo caído tras `WORKER_MAX_ATTEMPTS` intentos) o `error`.
+
+**Exclusión y deduplicación:** índices únicos parciales en `summaries`: uno por `_entry_id` (reprocesar una entrada tras una caída devuelve la misma solicitud) y uno por canal mientras `_automatic_active` (a lo sumo una solicitud automática sin terminar por canal, aunque varios workers evalúen entradas a la vez). La marca se libera al pasar a `completada` o `fallida` (también tras vencer el lease de un worker caído). Las solicitudes manuales no participan. Una entrada abandonada en `processing` se reclama al vencer su lease.
+
+**Prueba sin Gateway:** `python -m app.tools.publish_channel_entered CHANNEL_ID USER_ID [ENTRY_ID]` (dentro del contenedor) publica el evento como lo haría el Gateway; repetir el mismo `ENTRY_ID` simula un reintento. El Gateway recibirá el resultado por `summary.generated` / `summary.failed` (ver Eventos terminales) con `requested_by` = el usuario que entró.
 
 ## Verificación actual de pasos 4–6
 

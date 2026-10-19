@@ -14,7 +14,7 @@ from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from .errors import PersistenceConflict, SummaryNotFound, SummaryStateConflict
 from .models import (
-    Checkpoint, Digest, DomainModel, LocalMessage, MessageState, Summary,
+    ChannelEntry, Checkpoint, Digest, DomainModel, LocalMessage, MessageState, Summary,
     SummaryRequest, TimeInterval, make_event, utc_now,
 )
 
@@ -29,7 +29,7 @@ def _decode(model: type[Model], document: dict | None) -> Model | None:
     return model.model_validate({key: value for key, value in document.items()
                                 if key not in ("_id", "_request_delivery", "_history", "_window",
                                                "_lease", "_attempts", "_coverage_pending",
-                                               "_terminal_delivery")})
+                                               "_terminal_delivery", "_entry_id", "_automatic_active")})
 
 
 def _document(model: DomainModel) -> dict:
@@ -58,6 +58,7 @@ class MongoRepository:
         self.digests = self.database["digests"]
         self.checkpoints = self.database["checkpoints"]
         self.messages = self.database["messages"]
+        self.entries = self.database["entries"]
 
     def ensure_indexes(self) -> None:
         """Idempotente. Un conflicto con datos existentes debe fallar al iniciar."""
@@ -78,6 +79,15 @@ class MongoRepository:
         self.summaries.create_index(
             [("_terminal_delivery.published", ASCENDING), ("updated_at", ASCENDING)],
             name="terminal_delivery_pending")
+        # Solicitudes automáticas: una por entrada (idempotencia) y una activa por canal (exclusión).
+        self.summaries.create_index(
+            [("_entry_id", ASCENDING)], unique=True, name="summary_per_entry",
+            partialFilterExpression={"_entry_id": {"$type": "string"}})
+        self.summaries.create_index(
+            [("channel_id", ASCENDING)], unique=True, name="one_active_automatic_per_channel",
+            partialFilterExpression={"_automatic_active": True})
+        self.entries.create_index("entry_id", unique=True, name="entry_id_unique")
+        self.entries.create_index([("status", ASCENDING), ("received_at", ASCENDING)], name="entries_pending")
         self.digests.create_index("id", unique=True, name="digest_id_unique")
         self.digests.create_index("summary_id", unique=True, name="digest_per_summary")
         self.digests.create_index(
@@ -91,7 +101,8 @@ class MongoRepository:
             name="uncovered_messages")
 
     def create_summary(self, channel_id: str, request: SummaryRequest | None = None, *,
-                       event_factory: Callable[[Summary], dict] | None = None) -> Summary:
+                       event_factory: Callable[[Summary], dict] | None = None,
+                       entry_id: str | None = None) -> Summary:
         request = request or SummaryRequest()
         now = utc_now()
         summary = Summary(channel_id=channel_id, requested_by=request.user_id,
@@ -102,8 +113,68 @@ class MongoRepository:
                 "event": event_factory(summary), "published": False, "received": False,
                 "attempts": 0, "last_error": None,
             }
+        if entry_id is not None:
+            # Solicitud automática: única por entrada y, mientras no termine, única por canal.
+            document["_entry_id"] = entry_id
+            document["_automatic_active"] = True
         self.summaries.insert_one(document)
         return summary
+
+    def create_automatic_summary(self, channel_id: str, user_id: str, entry_id: str, *,
+                                 event_factory: Callable[[Summary], dict]) -> tuple[str, Summary | None]:
+        """Crear la solicitud automática de una entrada. Devuelve (resultado, resumen).
+
+        "requested": creada, o ya existía para esta entrada (reintento idempotente).
+        "already_active": el canal ya tiene una solicitud automática sin terminar.
+        """
+        try:
+            return "requested", self.create_summary(channel_id, SummaryRequest(user_id=user_id),
+                                                    event_factory=event_factory, entry_id=entry_id)
+        except DuplicateKeyError as exc:
+            if "_entry_id" in (exc.details or {}).get("keyPattern", {}):
+                return "requested", _decode(Summary, self.summaries.find_one({"_entry_id": entry_id}))
+            return "already_active", None
+
+    # --- Entradas a canales (inbox durable; las evalúa el worker) ---
+
+    def receive_channel_entry(self, entry: ChannelEntry) -> bool:
+        """Guardar una vez por entry_id; un reintento del mismo evento no crea otra entrada."""
+        document = {**entry.model_dump(), "status": "pending", "attempts": 0, "outcome": None,
+                    "summary_id": None, "received_at": utc_now()}
+        result = self.entries.update_one({"entry_id": entry.entry_id}, {"$setOnInsert": document}, upsert=True)
+        if result.upserted_id is not None:
+            return True
+        existing = self.entries.find_one({"entry_id": entry.entry_id})
+        if (existing["channel_id"], existing["user_id"]) != (entry.channel_id, entry.user_id):
+            raise PersistenceConflict("A different channel entry already exists for this entry_id")
+        return False
+
+    def claim_entry(self, owner: str, lease_seconds: float) -> dict | None:
+        now = utc_now()
+        return self.entries.find_one_and_update(
+            {"$or": [{"status": "pending"}, {"status": "processing", "lease.expires_at": {"$lt": now}}]},
+            {"$set": {"status": "processing",
+                      "lease": {"owner": owner, "expires_at": now + timedelta(seconds=lease_seconds)}},
+             "$inc": {"attempts": 1}},
+            sort=[("received_at", ASCENDING), ("entry_id", ASCENDING)], projection={"_id": 0},
+            return_document=ReturnDocument.AFTER)
+
+    def release_entry(self, entry_id: str, owner: str) -> bool:
+        return self.entries.update_one({"entry_id": entry_id, "status": "processing", "lease.owner": owner},
+                                       {"$set": {"status": "pending"}, "$unset": {"lease": ""}}).matched_count == 1
+
+    def finish_entry(self, entry_id: str, owner: str, outcome: str, summary_id: str | None = None) -> bool:
+        return self.entries.update_one(
+            {"entry_id": entry_id, "status": "processing", "lease.owner": owner},
+            {"$set": {"status": "done", "outcome": outcome, "summary_id": summary_id,
+                      "processed_at": utc_now()}, "$unset": {"lease": ""}}).matched_count == 1
+
+    def count_recent_pending(self, channel_id: str, since: datetime) -> int:
+        """Mensajes sin cobertura creados desde `since` (los más viejos no entrarán a ningún resumen)."""
+        checkpoint = _decode(Checkpoint, self.checkpoints.find_one({"channel_id": channel_id}))
+        query = self._pending_query(checkpoint or Checkpoint(channel_id=channel_id))
+        query["created_at"] = {"$gte": since}
+        return self.messages.count_documents(query)
 
     # --- Outbox: el evento se guarda en el mismo documento que el cambio que lo origina ---
 
@@ -255,7 +326,7 @@ class MongoRepository:
             query["_lease.owner"] = owner  # Un worker con lease vencido no confirma resultados.
         update = {"$set": {"messageState": target, **values}, "$max": {"updated_at": now}}
         if target in (MessageState.completada, MessageState.fallida):
-            update["$unset"] = {"_lease": ""}
+            update["$unset"] = {"_lease": "", "_automatic_active": ""}  # Libera la exclusión del canal.
             # El evento terminal nace en la misma escritura que el estado: si hay estado, hay evento.
             update["$set"]["_terminal_delivery"] = {
                 "event": self._terminal_event(self.get_summary(summary_id), target, values, now),

@@ -199,6 +199,8 @@ También se verificó la persistencia al recrear Mongo/FastAPI, la conexión de 
 
 **Se acepta cuando:** un evento real del Gateway inicia la generación solo al superar el umbral; entradas simultáneas/repetidas, mensajes tardíos y caídas no duplican solicitudes ni alteran resúmenes publicados.
 
+**Estado: implementado por el lado de summaries** (sin Gateway: se prueba con `python -m app.tools.publish_channel_entered`). Contrato, flujo y exclusión en `docs/REFERENCIA.md`.
+
 ### Paso 10 — integración, resiliencia y entrega
 
 - Probar el recorrido con chat base, broker compartido, Gateway y una API LLM real configurada: crear conversación, pedir un intervalo y verificar contenido; luego superar el umbral y entrar al canal para verificar la generación automática.

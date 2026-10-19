@@ -65,7 +65,7 @@ def test_indexes_are_idempotent_and_enforce_unique_ids(repository):
     summary = repository.create_summary("channel")
     with pytest.raises(DuplicateKeyError):
         repository.summaries.insert_one(summary.model_dump())
-    assert set(repository.database.list_collection_names()) == {"summaries", "digests", "checkpoints", "messages"}
+    assert set(repository.database.list_collection_names()) == {"summaries", "digests", "checkpoints", "messages", "entries"}
 
 
 def test_missing_summary_raises_explicit_404(repository):
@@ -478,7 +478,7 @@ def test_outbox_survives_failed_publication_and_next_process_can_deliver(api, re
         runtime.stop()
         with pika.BlockingConnection(runtime.connection_parameters()) as connection:
             channel = connection.channel()
-            for queue in (runtime.history_queue, runtime.requests_queue, runtime.errors_queue):
+            for queue in (runtime.history_queue, runtime.requests_queue, runtime.entries_queue, runtime.errors_queue):
                 channel.queue_delete(queue)
             channel.exchange_delete(runtime.dead_exchange)
 
@@ -509,7 +509,7 @@ def test_rabbit_reconnects_after_initial_connection_failure(repository, broker_u
         runtime.stop()
         with connect(runtime.connection_parameters()) as conn:
             channel = conn.channel()
-            for queue in (runtime.history_queue, runtime.requests_queue, runtime.errors_queue):
+            for queue in (runtime.history_queue, runtime.requests_queue, runtime.entries_queue, runtime.errors_queue):
                 channel.queue_delete(queue)
             channel.exchange_delete(runtime.dead_exchange)
 
@@ -693,7 +693,7 @@ def test_outbox_is_published_on_notify_without_frequent_polling(repository, brok
         runtime.stop()
         with pika.BlockingConnection(runtime.connection_parameters()) as connection:
             channel = connection.channel()
-            for queue in (runtime.history_queue, runtime.requests_queue, runtime.errors_queue):
+            for queue in (runtime.history_queue, runtime.requests_queue, runtime.entries_queue, runtime.errors_queue):
                 channel.queue_delete(queue=queue)
             channel.exchange_delete(exchange=runtime.dead_exchange)
 
@@ -716,6 +716,6 @@ def test_outbox_polling_fallback_recovers_a_missed_notification(repository, brok
         runtime.stop()
         with pika.BlockingConnection(runtime.connection_parameters()) as connection:
             channel = connection.channel()
-            for queue in (runtime.history_queue, runtime.requests_queue, runtime.errors_queue):
+            for queue in (runtime.history_queue, runtime.requests_queue, runtime.entries_queue, runtime.errors_queue):
                 channel.queue_delete(queue=queue)
             channel.exchange_delete(exchange=runtime.dead_exchange)

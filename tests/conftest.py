@@ -91,6 +91,6 @@ def broker(repository, broker_url):
         broker.stop()
         with pika.BlockingConnection(broker.connection_parameters()) as connection:
             channel = connection.channel()
-            for queue in (broker.history_queue, broker.requests_queue, broker.errors_queue):
+            for queue in (broker.history_queue, broker.requests_queue, broker.entries_queue, broker.errors_queue):
                 channel.queue_delete(queue=queue)
             channel.exchange_delete(exchange=broker.dead_exchange)

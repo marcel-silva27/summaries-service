@@ -98,7 +98,7 @@ Propuesta completa (con diagramas de arquitectura y flujo end2end): https://clau
 | 6 | RabbitMQ: consumidor de `chat.message.created`, bandeja durable de `summary.requested` | Hecho |
 | 7 | Worker + cliente LLM (mock y Gemini) | Hecho |
 | 8 | Publicar `summary.generated` / `summary.failed` con entrega fiable | Hecho |
-| 9 | Resumen automático por entrada al canal (Gateway) y `messageThreshold` | Pendiente |
+| 9 | Resumen automático por entrada al canal (Gateway) y `messageThreshold` | Hecho (lado summaries; sin Gateway real) |
 | 10 | End2end, pulido, README y entrega pública | Pendiente |
 
 El POST devuelve 202 y la solicitud llega a la bandeja durable del worker; permanece `pendiente` hasta implementar el paso 7. Servicio en `localhost:8004` (`/docs`, `/health`); requiere el chat base corriendo (crea la red `microsvcs`, aquí `external: true`).
@@ -156,7 +156,7 @@ Resueltos:
 - Los secretos ya no pasan por un archivo versionado (ver decisión de variables de entorno).
 - **Upsert en lote:** `MongoRepository.upsert_messages` (`bulk_write` no ordenado, lotes de 1000, misma semántica idempotente/de conflicto que `upsert_message`, que ahora delega en él). `build_window` reconcilia con una escritura por lote en vez de 2–3 consultas por mensaje.
 - **Outbox por aviso:** `EventBroker.notify()` (un `threading.Event`) despierta la publicación; `SummaryService.request_summary` lo invoca al crear la solicitud (inyectado desde `app.state.broker`). Sin aviso, solo hay un sondeo de respaldo cada `OUTBOX_POLL_SECONDS` (default 5 s) y una publicación al (re)conectar; ya no se consulta Mongo cada 0,2 s. El worker del paso 7 debe reutilizar este patrón (aviso + respaldo).
-- `compose.test.yaml`: `mongodb` con `ulimits nofile 64000`; con el límite de 1024 de algunos hosts Linux, WiredTiger abortaba (EMFILE) a mitad de la suite. Suite: 210 pruebas aprobadas.
+- `compose.test.yaml`: `mongodb` con `ulimits nofile 64000`; con el límite de 1024 de algunos hosts Linux, WiredTiger abortaba (EMFILE) a mitad de la suite. Suite: 227 pruebas aprobadas.
 
 Abiertos, por prioridad:
 - **Operación:** `messages` del núcleo solo publica con `RABBITMQ_URL=amqp://summaries-rabbitmq:5672` aplicado por override en ejecución (repetir si se recrea el contenedor). El paso 9 depende de un Gateway que aún no existe.
@@ -193,7 +193,6 @@ Chat base (`docker compose -p demo`, override `RABBITMQ_URL`) + summaries con Ge
 - Al bajar el chat con `docker compose -p demo down` desaparece la red `microsvcs` (la crea ese proyecto); los volúmenes se conservan.
 
 ### Pendiente tras el paso 7
-- Un resumen incremental cuyos mensajes pendientes sean todos más antiguos que 7 días termina `fallida` y no avanza el checkpoint; revisar en el paso 9 para evitar reintentos repetidos por el umbral.
 
 ### Paso 8 — eventos terminales (hecho)
 - **Evento atómico con el estado:** `_transition` escribe `_terminal_delivery` (evento, `published`, `attempts`, `last_error`) en la misma operación que pasa a `completada`/`fallida`; un worker con lease vencido no lo escribe y re-confirmar no lo duplica.
@@ -206,3 +205,11 @@ Chat base (`docker compose -p demo`, override `RABBITMQ_URL`) + summaries con Ge
 El servicio ya cumple su lado del contrato; al Gateway le corresponde:
 1. **Recibir resultados:** declarar una cola durable propia enlazada al exchange `summaries` con `summary.generated`/`summary.failed`, deduplicar por tipo + `summary_id` y consultar el contenido por `GET /api/v1/summaries/{id}`. Para ponerse al día tras estar caído: `GET /api/v1/events`.
 2. **Avisar la entrada a un canal (paso 9):** publicar `chat.channel.entered` (`channel_id`, `user_id`, `entry_id`) en el exchange `gateway` (propuesta en REFERENCIA.md). Mientras no exista, el paso 9 se probará con un publicador de prueba, no con una ruta nueva en este servicio.
+
+### Paso 9 — resumen automático (hecho, sin Gateway real)
+- **Entrada:** consumidor de `chat.channel.entered` (exchange `gateway`, durable; cola propia `summaries_for_channel_entered_queue`) que solo **persiste** la entrada (`entries`, única por `entry_id`) y despierta al worker; la evaluación (llamadas al núcleo) la hace el worker, no el hilo de RabbitMQ. Eventos incoherentes → cola de errores.
+- **Umbral estricto** sobre mensajes sin cobertura **dentro de la ventana de 7 días** (`count_recent_pending`): más de `MESSAGE_THRESHOLD` (50 no, 51 sí). Resuelve el pendiente anterior: los mensajes más viejos no cuentan, así que ya no hay solicitudes repetidas ni resúmenes `fallida` por eso. Antes de contar se reconcilia por API (imprescindible por el bug del demo, que no emite eventos de mensajes).
+- **Exclusión/dedup:** índices únicos parciales en `summaries` (`_entry_id`, y `channel_id` mientras `_automatic_active`); la marca se libera en `completada`/`fallida`. Resultado por entrada en `entries.outcome` (`requested`, `below_threshold`, `no_recent_messages`, `already_active`, `invalid_reference`, `dependency_unavailable`, `error`).
+- La solicitud automática es una solicitud normal (outbox, `requested_by` = quien entró, `trigger: "automatic"` y `entry_id` en el evento).
+- **Prueba sin Gateway:** `python -m app.tools.publish_channel_entered CHANNEL_ID USER_ID [ENTRY_ID]`. Verificado con el chat real y Gemini: un evento repetido abrió una sola solicitud, se completó con decisiones/evento/tarea correctos, y una segunda entrada sin mensajes nuevos dio `no_recent_messages`.
+- **El Gateway no es necesario** para completar la tarea ni para probar el paso 9; solo sería el productor real de `chat.channel.entered`.

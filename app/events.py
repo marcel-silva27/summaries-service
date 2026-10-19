@@ -12,7 +12,7 @@ from pymongo.errors import PyMongoError
 
 from . import config
 from .errors import ServiceError
-from .models import Identifier, LocalMessage, make_event  # noqa: F401  (make_event se reexporta)
+from .models import ChannelEntry, Identifier, LocalMessage, make_event  # noqa: F401  (make_event se reexporta)
 from .repository import MongoRepository
 
 logger = logging.getLogger(__name__)
@@ -30,11 +30,12 @@ class EventBroker:
     def __init__(self, repository: MongoRepository, *, url: str | None = None,
                  queue_prefix: str = "summaries", on_request_received: Callable[[], None] | None = None):
         self.repository = repository
-        # Despierta al worker cuando una solicitud queda recibida de forma durable.
+        # Despierta al worker cuando llega trabajo guardado de forma durable (solicitud o entrada).
         self.on_request_received = on_request_received or (lambda: None)
         self.url = config.BROKER_URL if url is None else url
         self.history_queue = f"{queue_prefix}_for_chat_messages_queue"
         self.requests_queue = f"{queue_prefix}_for_summary_requested_queue"
+        self.entries_queue = f"{queue_prefix}_for_channel_entered_queue"
         self.errors_queue = f"{queue_prefix}_errors_queue"
         self.dead_exchange = f"{queue_prefix}.deadletters"
         self._stop = Event()
@@ -60,12 +61,14 @@ class EventBroker:
         # El núcleo declara chat NO durable: cambiar este valor rompe la integración.
         channel.exchange_declare(exchange=config.CHAT_EXCHANGE, exchange_type="topic", durable=False)
         channel.exchange_declare(exchange=config.SUMMARIES_EXCHANGE, exchange_type="topic", durable=True)
+        channel.exchange_declare(exchange=config.GATEWAY_EXCHANGE, exchange_type="topic", durable=True)
         channel.exchange_declare(exchange=self.dead_exchange, exchange_type="topic", durable=True)
         channel.queue_declare(queue=self.errors_queue, durable=True)
         channel.queue_bind(queue=self.errors_queue, exchange=self.dead_exchange, routing_key="#")
         for queue, exchange, key in (
             (self.history_queue, config.CHAT_EXCHANGE, "chat.message.created"),
             (self.requests_queue, config.SUMMARIES_EXCHANGE, "summary.requested"),
+            (self.entries_queue, config.GATEWAY_EXCHANGE, "chat.channel.entered"),
         ):
             channel.queue_declare(queue=queue, durable=True,
                                   arguments={"x-dead-letter-exchange": self.dead_exchange})
@@ -101,6 +104,8 @@ class EventBroker:
                                       on_message_callback=self._consume_history)
                 channel.basic_consume(queue=self.requests_queue, auto_ack=False,
                                       on_message_callback=self._consume_request)
+                channel.basic_consume(queue=self.entries_queue, auto_ack=False,
+                                      on_message_callback=self._consume_entry)
                 self.ready.set()
                 last_flush = float("-inf")  # Tras conectar, publicar lo que haya quedado pendiente.
                 while not self._stop.is_set():
@@ -154,6 +159,9 @@ class EventBroker:
     def _consume_request(self, channel, method, properties, body) -> None:
         self._consume(channel, method, body, "summary.requested")
 
+    def _consume_entry(self, channel, method, properties, body) -> None:
+        self._consume(channel, method, body, "chat.channel.entered")
+
     def _consume(self, channel, method, body: bytes, expected_type: str) -> None:
         try:
             event = _Envelope.model_validate_json(body)
@@ -164,6 +172,12 @@ class EventBroker:
                 if message.id != event.subject_id:
                     raise ValueError("Event subject does not match message ID")
                 self.repository.upsert_message(message)
+            elif expected_type == "chat.channel.entered":
+                entry = ChannelEntry.model_validate(event.data)
+                if entry.channel_id != event.subject_id:
+                    raise ValueError("Event subject does not match the entered channel")
+                self.repository.receive_channel_entry(entry)
+                self.on_request_received()
             else:
                 self.repository.receive_summary_request(event.model_dump(mode="json"))
                 self.on_request_received()

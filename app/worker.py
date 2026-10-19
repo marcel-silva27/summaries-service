@@ -38,7 +38,7 @@ class SummaryWorker:
         self.repository = repository
         self.core = core
         self.provider = provider
-        self.service = SummaryService(repository, core)
+        self.service = SummaryService(repository, core, lambda: self.on_result())
         self.owner = f"worker-{uuid4()}"
         self._names: dict[str, str] = {}
         self._wake = Event()
@@ -81,6 +81,7 @@ class SummaryWorker:
         """Procesar todo el trabajo disponible; devuelve cuántas solicitudes se reclamaron."""
         for summary in self.repository.pending_coverage():
             self._confirm_coverage(summary)
+        self._process_entries()
         processed = 0
         while not self._stop.is_set():
             claim = self.repository.claim_summary(self.owner, config.WORKER_LEASE_SECONDS)
@@ -89,6 +90,30 @@ class SummaryWorker:
             processed += 1
             self._process(claim)
         return processed
+
+    def _process_entries(self) -> None:
+        """Evaluar las entradas a canales recibidas; una solicitud automática sigue el flujo normal."""
+        while not self._stop.is_set():
+            entry = self.repository.claim_entry(self.owner, config.WORKER_LEASE_SECONDS)
+            if entry is None:
+                return
+            outcome, summary_id = None, None
+            try:
+                outcome, summary_id = self.service.handle_channel_entry(entry)
+            except (ChannelNotFound, UserNotFound):
+                outcome = "invalid_reference"
+            except (DependencyUnavailable, DependencyFailed):
+                if entry["attempts"] < config.WORKER_MAX_ATTEMPTS:
+                    if self.repository.release_entry(entry["entry_id"], self.owner):
+                        self._stop.wait(config.WORKER_RETRY_SECONDS)
+                    continue
+                outcome = "dependency_unavailable"
+            except PyMongoError:
+                raise
+            except Exception:
+                logger.exception("Unexpected error evaluating channel entry %s", entry["entry_id"])
+                outcome = "error"
+            self.repository.finish_entry(entry["entry_id"], self.owner, outcome, summary_id)
 
     def _confirm_coverage(self, summary: Summary) -> None:
         try:

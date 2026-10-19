@@ -337,7 +337,7 @@ def test_request_flows_from_post_through_broker_to_the_worker_without_polling(ap
         worker.stop()
         with pika.BlockingConnection(runtime.connection_parameters()) as connection:
             channel = connection.channel()
-            for queue in (runtime.history_queue, runtime.requests_queue, runtime.errors_queue):
+            for queue in (runtime.history_queue, runtime.requests_queue, runtime.entries_queue, runtime.errors_queue):
                 channel.queue_delete(queue=queue)
             channel.exchange_delete(exchange=runtime.dead_exchange)
 
@@ -449,7 +449,7 @@ def test_event_listing_is_durable_ordered_and_paginated(repository, core):
 def _cleanup(runtime):
     with pika.BlockingConnection(runtime.connection_parameters()) as connection:
         channel = connection.channel()
-        for name in (runtime.history_queue, runtime.requests_queue, runtime.errors_queue):
+        for name in (runtime.history_queue, runtime.requests_queue, runtime.entries_queue, runtime.errors_queue):
             channel.queue_delete(queue=name)
         channel.exchange_delete(exchange=runtime.dead_exchange)
 

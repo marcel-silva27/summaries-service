@@ -42,3 +42,5 @@ MESSAGE_THRESHOLD = int(os.environ.get("MESSAGE_THRESHOLD", "50"))
 # Exchange del chat base: topic y NO durable (debe coincidir con `messages`).
 CHAT_EXCHANGE = "chat"
 SUMMARIES_EXCHANGE = "summaries"
+# El Gateway (aún inexistente) publica aquí la entrada de un usuario a un canal. Durable.
+GATEWAY_EXCHANGE = "gateway"

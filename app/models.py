@@ -121,6 +121,13 @@ class Digest(DomainModel):
         return self
 
 
+class ChannelEntry(DomainModel):
+    """Entrada de un usuario a un canal, publicada por el Gateway (`chat.channel.entered`)."""
+    channel_id: Identifier
+    user_id: Identifier
+    entry_id: Identifier  # Identifica la entrada; se conserva al reintentar el evento.
+
+
 class LocalMessage(DomainModel):
     """Proyección local del contrato público de messages; no es su fuente de verdad."""
     id: Identifier

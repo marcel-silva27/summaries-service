@@ -8,7 +8,7 @@ from fastapi import Depends, Request
 from . import config
 from .clients.core_client import CoreClient, CoreClientDependency
 from .errors import PersistenceConflict
-from .models import Checkpoint, LocalMessage, Summary, SummaryRequest, TimeInterval, make_event
+from .models import Checkpoint, LocalMessage, Summary, SummaryRequest, TimeInterval, make_event, utc_now
 from .repository import MongoRepository, RepositoryDependency
 
 
@@ -53,6 +53,41 @@ class SummaryService:
         self.core.get_channel(channel_id)
         return self.repository.latest_summary(channel_id)
 
+    def reconcile(self, channel_id: str) -> None:
+        """Completar el historial local por API: `messages` no publica todos los eventos si su broker falla."""
+        self.repository.upsert_messages(
+            [LocalMessage.model_validate(data) for data in self.core.list_messages(channel_id)])
+
+    def handle_channel_entry(self, entry: dict) -> tuple[str, str | None]:
+        """Evaluar la entrada de un usuario a un canal. Devuelve (resultado, summary_id).
+
+        Crea una solicitud automática solo si los mensajes sin cobertura de la ventana superan
+        MESSAGE_THRESHOLD (estricto: con 50 y umbral 50 no; con 51, sí). Los anteriores a
+        LLM_MAX_DAYS no cuentan: nunca entrarán a un resumen y dispararían la solicitud siempre.
+        """
+        channel_id, user_id, entry_id = entry["channel_id"], entry["user_id"], entry["entry_id"]
+        self.core.get_channel(channel_id)
+        self.core.get_user(user_id)
+        self.reconcile(channel_id)
+        pending = self.repository.count_recent_pending(channel_id, utc_now() - timedelta(days=config.LLM_MAX_DAYS))
+        if pending == 0:
+            return "no_recent_messages", None
+        if pending <= config.MESSAGE_THRESHOLD:
+            return "below_threshold", None
+
+        def event_for(item: Summary) -> dict:
+            return make_event(
+                "summary.requested", item.id,
+                {"channel_id": item.channel_id, "requested_by": item.requested_by, "timeInterval": None,
+                 "trigger": "automatic", "entry_id": entry_id},
+                occurred_at=item.created_at)
+
+        outcome, summary = self.repository.create_automatic_summary(channel_id, user_id, entry_id,
+                                                                     event_factory=event_for)
+        if summary is not None:
+            self.on_request_created()
+        return outcome, summary.id if summary else None
+
     def build_window(self, summary_id: str, *, page_size: int = 1000) -> MessageWindow:
         if page_size < 1:
             raise ValueError("page_size must be positive")
@@ -61,9 +96,7 @@ class SummaryService:
         if snapshot is not None:
             return self._window_from_snapshot(summary.channel_id, snapshot)
         self.core.get_channel(summary.channel_id)
-        # messages no publica todos los eventos si su broker falla: reconciliar siempre por API.
-        self.repository.upsert_messages(
-            [LocalMessage.model_validate(data) for data in self.core.list_messages(summary.channel_id)])
+        self.reconcile(summary.channel_id)
         interval = summary.timeInterval
         after = None
         messages = []
