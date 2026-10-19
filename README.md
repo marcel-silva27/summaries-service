@@ -8,7 +8,7 @@ Detalle de dominio, contratos y decisiones de arquitectura: ver [`CLAUDE.md`](./
 
 Etapas **1 a 6 completadas**: FastAPI, persistencia Mongo, cliente HTTP, ventanas reconciliadas, REST con polling e integración RabbitMQ.
 
-Las cuatro rutas de summaries ya funcionan. POST valida referencias y devuelve `202` con una solicitud durable; RabbitMQ la publica y registra su recepción. Un worker toma la solicitud y la completa con el proveedor configurado: por defecto `mock`, que **simula** el resumen (no es un LLM real); Gemini se conecta al final del paso 7. `/api/v1/events` sigue siendo un espejo en memoria; el evento requested sí se conserva en Mongo.
+Las cuatro rutas de summaries ya funcionan. POST valida referencias y devuelve `202` con una solicitud durable; RabbitMQ la publica y registra su recepción. Un worker toma la solicitud y la completa con el proveedor configurado: por defecto `mock`, que **simula** el resumen (no es un LLM real); Gemini se activa con `LLM_PROVIDER=gemini` en `.env`. `/api/v1/events` sigue siendo un espejo en memoria; el evento requested sí se conserva en Mongo.
 
 Decisiones en [`CLAUDE.md`](./CLAUDE.md). Conceptos, contratos y detalles reunidos en [`docs/REFERENCIA.md`](./docs/REFERENCIA.md).
 
@@ -105,8 +105,9 @@ No se editan los archivos de `microservicios/`; solo se configura RABBITMQ_URL e
 | `USERS_URL` | Base URL del servicio `users` del núcleo |
 | `CHANNELS_URL` | Base URL del servicio `channels` del núcleo |
 | `MESSAGES_URL` | Base URL del servicio `messages` del núcleo |
-| `LLM_PROVIDER` | `mock` (default, resumen simulado) o `gemini` (aún no implementado) |
-| `LLM_API_KEY`, `LLM_MODEL`, `LLM_FALLBACK_MODEL` | Credencial (solo en `.env`) y modelos del proveedor real |
+| `LLM_PROVIDER` | `mock` (default, resumen simulado) o `gemini` |
+| `LLM_API_KEY`, `LLM_MODEL`, `LLM_FALLBACK_MODEL` | Credencial (**solo en `.env`**) y modelos de Gemini (principal y de respaldo, p. ej. `gemini-3.5-flash-lite` y `gemini-3.8-flash`) |
+| `LLM_API_URL`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_MAX_WAIT_SECONDS` | Base de la API de Gemini, timeout (60) y espera máxima del reintento inmediato ante 429 (10) |
 | `LLM_MAX_DAYS`, `LLM_MAX_MESSAGES`, `LLM_MAX_INPUT_CHARS` | Límites de la ventana enviada al LLM: 7 días, 500 mensajes, 400000 caracteres |
 | `WORKER_POLL_SECONDS`, `WORKER_RETRY_SECONDS`, `WORKER_LEASE_SECONDS`, `WORKER_MAX_ATTEMPTS` | Worker de generación: sondeo de respaldo (5), espera entre reintentos (5), lease (120) e intentos (3) |
 | `BROKER_URL` | Conexión al broker de eventos |
@@ -118,7 +119,7 @@ No se editan los archivos de `microservicios/`; solo se configura RABBITMQ_URL e
 | `LLM_TIMEOUT_SECONDS` | Timeout LLM; por defecto `60` s |
 | `MESSAGE_THRESHOLD` | Umbral automático; por defecto `50`; el disparo será con **más de** ese valor |
 
-Compose carga `.env.example` (valores por defecto versionados) y después `.env` si existe, que lo sobrescribe: crea `.env` (ignorado por git) para secretos como `LLM_API_KEY`. MONGODB_URL se fija siempre al contenedor propio; BROKER_URL admite override desde el entorno o `.env`, con default summaries-rabbitmq. Con `LLM_PROVIDER=mock` el resumen es simulado (determinista); no versionar credenciales reales.
+Compose carga `.env.example` (valores por defecto versionados) y después `.env` si existe, que lo sobrescribe: crea `.env` (ignorado por git) para secretos como `LLM_API_KEY`. MONGODB_URL se fija siempre al contenedor propio; BROKER_URL admite override desde el entorno o `.env`, con default summaries-rabbitmq. Con `LLM_PROVIDER=mock` el resumen es simulado (determinista); para Gemini crea `.env` con `LLM_PROVIDER=gemini`, `LLM_API_KEY`, `LLM_MODEL` y `LLM_FALLBACK_MODEL`; no versionar credenciales reales.
 
 ## Uso de la API
 
@@ -169,7 +170,7 @@ También se verificó la persistencia al recrear Mongo/FastAPI, la conexión de 
 
 - Crear un worker independiente del hilo RabbitMQ. Leer received_requests de Mongo y reclamar cada pendiente con exclusión mutua; el consumo del historial debe continuar mientras el LLM responde.
 - Implementar lease/ownership para recuperar procesando tras una caída y evitar que un worker vencido confirme resultados. Reutilizar el snapshot guardado y cualquier digest ya persistido; no volver a llamar al LLM si el resultado existe.
-- Completar llm_client.py: proveedores detrás de `LLMRequest` (mock hecho; Gemini al final), credencial opcional, timeout y validación de contenido no vacío. Resolver nombres de autores con caché; el prompt debe priorizar decisiones, eventos y responsables de tareas sin inventar información.
+- Completar llm_client.py: proveedores detrás de `LLMRequest` (mock y Gemini hechos), credencial opcional, timeout y validación de contenido no vacío. Resolver nombres de autores con caché; el prompt debe priorizar decisiones, eventos y responsables de tareas sin inventar información.
 - Usar el contrato HTTP propuesto en REFERENCIA.md y agregar el mock al compose de pruebas. La entrega final debe poder apuntar a una API real; el mock no será el proveedor de producción.
 - Guardar digest → completar summary → confirmar cobertura incremental/checkpoint. Ventanas por intervalo no consumen la cobertura del canal. Ventana vacía, errores de proveedor o respuesta inválida deben terminar en fallida con una explicación consultable por polling.
 - Para conversaciones que superen el contexto del proveedor, procesar partes sin truncar mensajes silenciosamente y producir un digest final por solicitud. Persistir avances necesarios para recuperar una ejecución interrumpida.

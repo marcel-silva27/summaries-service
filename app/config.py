@@ -17,10 +17,13 @@ CORE_TIMEOUT_SECONDS = float(os.environ.get("CORE_TIMEOUT_SECONDS", "2"))
 
 # LLM: `mock` (desarrollo/pruebas) o `gemini` (se conecta al final del paso 7).
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "mock")
+LLM_API_URL = os.environ.get("LLM_API_URL", "https://generativelanguage.googleapis.com/v1beta")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 LLM_MODEL = os.environ.get("LLM_MODEL", "")
 LLM_FALLBACK_MODEL = os.environ.get("LLM_FALLBACK_MODEL", "")
 LLM_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "60"))
+# Espera máxima para un único reintento inmediato ante 429 (si el proveedor indica cuánto esperar).
+LLM_RETRY_MAX_WAIT_SECONDS = float(os.environ.get("LLM_RETRY_MAX_WAIT_SECONDS", "10"))
 
 # Límites de la ventana enviada al LLM (lo que ocurra primero). Se aplican desde los mensajes
 # más recientes; lo omitido se registra en el digest, nunca se recorta en silencio.

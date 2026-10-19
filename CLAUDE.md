@@ -96,7 +96,7 @@ Propuesta completa (con diagramas de arquitectura y flujo end2end): https://clau
 | 4 | `POST /channels/{id}/summaries` (202 + Location) y ventanas de mensajes | Hecho |
 | 5 | Los 3 `GET` restantes (por id, listado paginado, latest) | Hecho |
 | 6 | RabbitMQ: consumidor de `chat.message.created`, bandeja durable de `summary.requested` | Hecho |
-| 7 | Worker + cliente LLM + mock de pruebas | **Worker y mock hechos**; falta el adaptador Gemini (se conecta al final) |
+| 7 | Worker + cliente LLM (mock y Gemini) | Hecho |
 | 8 | Publicar `summary.generated` / `summary.failed` con entrega fiable | Pendiente |
 | 9 | Resumen automático por entrada al canal (Gateway) y `messageThreshold` | Pendiente |
 | 10 | End2end, pulido, README y entrega pública | Pendiente |
@@ -106,7 +106,7 @@ El POST devuelve 202 y la solicitud llega a la bandeja durable del worker; perma
 Archivos:
 - `app/main.py`: lifespan de Mongo/HTTP y del hilo RabbitMQ, health y events.
 - `app/models.py`, `app/repository.py`: summaries, digests, checkpoints e historial local.
-- `app/clients/core_client.py`: get_channel, get_user y list_messages con validación y errores explícitos. `llm_client.py`: `LLMProvider`/`LLMRequest`, `MockProvider` y `build_provider` (`gemini` aún no implementado).
+- `app/clients/core_client.py`: get_channel, get_user y list_messages con validación y errores explícitos. `llm_client.py`: `LLMProvider`/`LLMRequest`, `MockProvider`, `GeminiProvider` y `build_provider`.
 - `app/worker.py`: worker de generación (lease con dueño, intentos, recuperación de cobertura, límites de ventana).
 - `app/services.py`: solicitudes y ventanas reconciliadas, con snapshot inmutable y cobertura de tardíos.
 - `app/events.py`: publicador/consumidores, confirmaciones, reconexión y cola de errores.
@@ -156,7 +156,7 @@ Resueltos:
 - Los secretos ya no pasan por un archivo versionado (ver decisión de variables de entorno).
 - **Upsert en lote:** `MongoRepository.upsert_messages` (`bulk_write` no ordenado, lotes de 1000, misma semántica idempotente/de conflicto que `upsert_message`, que ahora delega en él). `build_window` reconcilia con una escritura por lote en vez de 2–3 consultas por mensaje.
 - **Outbox por aviso:** `EventBroker.notify()` (un `threading.Event`) despierta la publicación; `SummaryService.request_summary` lo invoca al crear la solicitud (inyectado desde `app.state.broker`). Sin aviso, solo hay un sondeo de respaldo cada `OUTBOX_POLL_SECONDS` (default 5 s) y una publicación al (re)conectar; ya no se consulta Mongo cada 0,2 s. El worker del paso 7 debe reutilizar este patrón (aviso + respaldo).
-- `compose.test.yaml`: `mongodb` con `ulimits nofile 64000`; con el límite de 1024 de algunos hosts Linux, WiredTiger abortaba (EMFILE) a mitad de la suite. Suite: 183 pruebas aprobadas.
+- `compose.test.yaml`: `mongodb` con `ulimits nofile 64000`; con el límite de 1024 de algunos hosts Linux, WiredTiger abortaba (EMFILE) a mitad de la suite. Suite: 200 pruebas aprobadas.
 
 Abiertos, por prioridad:
 - **Eventos:** la lista `events` en memoria no tiene límite y se pierde al reiniciar; `publish()` es heredado del esqueleto y no publica al broker.
@@ -174,10 +174,16 @@ Abiertos, por prioridad:
 - **Worker** con lease con dueño: reclamo atómico (pendiente o procesando vencido), renovación antes de cada paso, intentos contados (`WORKER_MAX_ATTEMPTS`=3), reutilización del digest persistido sin volver a llamar al LLM, y confirmación de cobertura recuperable (`_coverage_pending`). Despertado por aviso desde el consumidor de `summary.requested` y por sondeo de respaldo.
 - **Ventana vacía** → `fallida` con motivo, sin llamar al LLM. **Errores transitorios** → reintento hasta el máximo y luego `fallida` con "(tras N intentos)".
 - **Límites 7 días / 500 mensajes / 400000 caracteres** desde los más recientes. Desviación respecto a lo conversado: los mensajes omitidos **sí se marcan como cubiertos** en resúmenes incrementales (con la idea original, el umbral del paso 9 se dispararía indefinidamente); el recorte queda en `Digest.omitted_count`, en el snapshot y en una nota al final del resumen. Los resúmenes por `timeInterval` no afectan la cobertura.
-- `LLM_PROVIDER=mock` es el default (incluido en `.env.example`): con el compose normal las solicitudes se completan con un resumen **simulado**. Gemini: `LLM_PROVIDER=gemini` falla al iniciar hasta implementar el adaptador (modelo principal Flash-Lite, respaldo Flash; sin proveedor de pago).
+- `LLM_PROVIDER=mock` es el default (incluido en `.env.example`): con el compose normal las solicitudes se completan con un resumen **simulado**; con `LLM_PROVIDER=gemini` en `.env` se usa Gemini (sin proveedor de pago).
 - Pruebas: `tests/conftest.py` desactiva los límites de ventana por defecto (fechas fijas); `tests/test_worker.py` los restablece.
 
+### Gemini (paso 7, completado)
+- `GeminiProvider` verificado con la API real (una llamada): modelo principal `gemini-3.5-flash-lite`, respaldo `gemini-3.8-flash` (IDs confirmados con `GET /v1beta/models`). La key vive en `.env` local (ignorado por git; **nunca en `.env.example`**, que está versionado). Para usarlo: `.env` con `LLM_PROVIDER=gemini`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_FALLBACK_MODEL`.
+- Límites de cuota gratuita informados por el equipo: Flash-Lite 15 RPM / 250K TPM / 500 RPD; Flash 5 RPM / 250K TPM / 20 RPD. Por eso Flash-Lite es el principal. Las pruebas automáticas nunca llaman a la API real.
+- El prompt prohíbe convertir días relativos en fechas (una prueba inicial lo hizo) y pide responder sin introducción.
+- Las llamadas de prueba con datos reales envían los mensajes a Google; en la capa gratuita pueden usarse para mejorar sus modelos: usar datos ficticios.
+
 ### Pendiente del paso 7
-- Adaptador Gemini (`generateContent`, key en `.env`, manejo de 429 con un reintento corto y modelo de respaldo, motivo legible al agotar cuota) y su prueba manual con la key real. Las pruebas automáticas no deben usarlo.
+- Prueba de extremo a extremo con el chat base real y Gemini (hoy solo se verificó el adaptador por separado y el flujo con mock).
 - El evento terminal (`summary.generated` / `summary.failed`) es del paso 8: el worker aún no publica nada al terminar.
 - Un resumen incremental cuyos mensajes pendientes sean todos más antiguos que 7 días termina `fallida` y no avanza el checkpoint; revisar en el paso 9 para evitar reintentos repetidos por el umbral.
