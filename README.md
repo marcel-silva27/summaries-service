@@ -8,7 +8,7 @@ Detalle de dominio, contratos y decisiones de arquitectura: ver [`CLAUDE.md`](./
 
 Etapas **1 a 6 completadas**: FastAPI, persistencia Mongo, cliente HTTP, ventanas reconciliadas, REST con polling e integración RabbitMQ.
 
-Las cuatro rutas de summaries ya funcionan. POST valida referencias y devuelve `202` con una solicitud durable; RabbitMQ la publica y registra su recepción. Un worker toma la solicitud y la completa con el proveedor configurado: por defecto `mock`, que **simula** el resumen (no es un LLM real); Gemini se activa con `LLM_PROVIDER=gemini` en `.env`. `/api/v1/events` sigue siendo un espejo en memoria; el evento requested sí se conserva en Mongo.
+Las cuatro rutas de summaries ya funcionan. POST valida referencias y devuelve `202` con una solicitud durable; RabbitMQ la publica y registra su recepción. Un worker toma la solicitud y la completa con el proveedor configurado: por defecto `mock`, que **simula** el resumen (no es un LLM real); Gemini se activa con `LLM_PROVIDER=gemini` en `.env`. Al terminar, el servicio emite `summary.generated` o `summary.failed` (guardado junto al estado y publicado con reintento). `GET /api/v1/events` lista los eventos durables desde Mongo.
 
 Decisiones en [`CLAUDE.md`](./CLAUDE.md). Conceptos, contratos y detalles reunidos en [`docs/REFERENCIA.md`](./docs/REFERENCIA.md).
 
@@ -182,7 +182,9 @@ También se verificó la persistencia al recrear Mongo/FastAPI, la conexión de 
 - Extender la outbox existente a summary.generated y summary.failed; guardar el evento junto al cambio terminal del summary, en una escritura del mismo documento.
 - Publicar desde el hilo RabbitMQ con mensajes persistentes, confirmación y reintento. Mantener una identidad estable por evento y aceptar entrega al menos una vez; el consumidor debe deduplicar sus efectos.
 - Recuperar las confirmaciones de cobertura pendientes si el proceso cae entre Mongo y la publicación. Una falla del broker no debe borrar un resumen completado ni volver a invocar al LLM.
-- Hacer que GET /api/v1/events recupere los eventos durables después de reiniciar; hoy es solo el espejo en memoria. Registrar intentos/errores de entrega para diagnóstico.
+- Hacer que GET /api/v1/events recupere los eventos durables después de reiniciar. Registrar intentos/errores de entrega para diagnóstico.
+
+**Estado: implementado.** Ver el contrato en `docs/REFERENCIA.md` (Eventos terminales).
 
 **Se acepta cuando:** cada resumen terminal produce su evento correcto, una caída en cada punto de confirmación se recupera, y un Gateway consumidor puede recibir el resultado sin consultar bases ajenas.
 

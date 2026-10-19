@@ -188,7 +188,7 @@ docker compose exec -T summaries-mongodb mongosh summaries --quiet --eval 'db.su
 
 Tras unos instantes, published=true y received=true indican publicación confirmada y recepción guardada. MessageState sigue pendiente. Si cambiaste MONGODB_DATABASE, reemplaza `summaries` en el comando. Esta inspección es solo de summaries-mongodb; no requiere entrar a bases del núcleo.
 
-El espejo `/events` se borra al reiniciar la aplicación, pero la solicitud y su evento quedan en Mongo.
+`GET /api/v1/events` lee los eventos desde Mongo (también `summary.generated` / `summary.failed` al terminar), así que sobreviven a reiniciar la aplicación.
 
 ## 5. Probar la ventana de mensajes sin LLM (opcional)
 

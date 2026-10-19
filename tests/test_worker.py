@@ -1,3 +1,4 @@
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -339,3 +340,205 @@ def test_request_flows_from_post_through_broker_to_the_worker_without_polling(ap
             for queue in (runtime.history_queue, runtime.requests_queue, runtime.errors_queue):
                 channel.queue_delete(queue=queue)
             channel.exchange_delete(exchange=runtime.dead_exchange)
+
+
+# --- Paso 8: eventos terminales ---
+
+def _terminal(repository, summary_id):
+    return repository.summaries.find_one({"id": summary_id}).get("_terminal_delivery")
+
+
+def test_completing_a_summary_stores_its_generated_event_in_the_same_write(repository, core):
+    seed(repository, core, [msg("m1")])
+    summary = received(repository, core, user_id="u1")
+    assert _terminal(repository, summary.id) is None
+    worker_for(repository, core).drain()
+    delivery = _terminal(repository, summary.id)
+    assert (delivery["published"], delivery["attempts"], delivery["last_error"]) == (False, 0, None)
+    event = delivery["event"]
+    assert (event["type"], event["subject_id"]) == ("summary.generated", summary.id)
+    assert event["data"] == {"summary_id": summary.id, "channel_id": "channel", "requested_by": "u1",
+                             "messageState": "completada"}  # El contenido se consulta por GET, no viaja aquí.
+    assert event["occurred_at"] == repository.get_summary(summary.id).updated_at.isoformat()
+    assert repository.pending_terminal_events() == [event]
+
+
+def test_failing_a_summary_stores_a_failed_event_with_a_readable_error(repository, core):
+    seed(repository, core, [msg("m1", "[mock:fail]")])
+    summary = received(repository, core)
+    worker_for(repository, core).drain()
+    event = _terminal(repository, summary.id)["event"]
+    assert event["type"] == "summary.failed"
+    assert event["data"] | {"error": None} == {"summary_id": summary.id, "channel_id": "channel",
+                                               "requested_by": None, "messageState": "fallida", "error": None}
+    assert event["data"]["error"] == repository.get_summary(summary.id).error
+
+
+def test_only_one_terminal_event_exists_per_summary_even_if_confirmed_again(repository, core):
+    seed(repository, core, [msg("m1")])
+    summary = received(repository, core)
+    worker_for(repository, core).drain()
+    first = _terminal(repository, summary.id)["event"]
+    repository.mark_terminal_published(summary.id)
+    assert repository.complete_summary(summary.id).messageState == MessageState.completada  # Idempotente.
+    with pytest.raises(SummaryStateConflict):
+        repository.fail_summary(summary.id, "tarde")
+    delivery = _terminal(repository, summary.id)
+    assert delivery["event"] == first and delivery["published"] is True
+    assert [e["type"] for e in repository.list_events() if e["subject_id"] == summary.id] == [
+        "summary.requested", "summary.generated"]
+
+
+def test_a_stale_worker_neither_changes_the_state_nor_creates_an_event(repository, core):
+    seed(repository, core, [msg("m1")])
+    summary = received(repository, core)
+    stale = worker_for(repository, core)
+    stale_claim = repository.claim_summary(stale.owner, 120)
+    stale._call_llm(stale_claim.summary, stale.service.build_window(summary.id))
+    repository.summaries.update_one({"id": summary.id}, {"$set": {"_lease.expires_at": BASE}})
+    repository.claim_summary("other-worker", 120)
+    with pytest.raises(SummaryStateConflict):
+        repository.complete_summary(summary.id, owner=stale.owner)
+    assert _terminal(repository, summary.id) is None
+
+
+def test_delivery_attempts_and_errors_are_recorded_for_diagnosis(repository, core):
+    seed(repository, core, [msg("m1")])
+    summary = received(repository, core)
+    worker_for(repository, core).drain()
+    repository.record_terminal_delivery_error(summary.id, "AMQPConnectionError: " + "x" * 500)
+    delivery = _terminal(repository, summary.id)
+    assert delivery["attempts"] == 1 and len(delivery["last_error"]) == 300 and not delivery["published"]
+    repository.mark_terminal_published(summary.id)
+    delivery = _terminal(repository, summary.id)
+    assert (delivery["attempts"], delivery["published"], delivery["last_error"]) == (2, True, None)
+    assert repository.pending_terminal_events() == []
+
+
+def test_the_worker_signals_the_outbox_after_completing_and_after_failing(repository, core):
+    seed(repository, core, [msg("m1")])
+    received(repository, core)
+    worker = worker_for(repository, core)
+    worker.on_result = MagicMock()
+    worker.drain()
+    assert worker.on_result.call_count == 1
+    seed(repository, core, [msg("m2", "[mock:fail]", at=BASE + timedelta(minutes=1))])
+    received(repository, core)
+    worker.drain()
+    assert worker.on_result.call_count == 2
+
+
+def test_event_listing_is_durable_ordered_and_paginated(repository, core):
+    seed(repository, core, [msg("m1")])
+    first = received(repository, core)
+    worker_for(repository, core).drain()
+    second = received(repository, core)  # Queda pendiente: solo tiene su evento de solicitud.
+    listed = repository.list_events()
+    assert {(e["type"], e["subject_id"]) for e in listed} == {
+        ("summary.requested", first.id), ("summary.generated", first.id), ("summary.requested", second.id)}
+    assert len(listed) == 3
+    assert [e["occurred_at"] for e in listed] == sorted(e["occurred_at"] for e in listed)
+    assert repository.list_events(limit=1, offset=1) == listed[1:2]
+    assert repository.list_events(offset=10) == []
+    from app.repository import MongoRepository
+    assert MongoRepository(repository.database).list_events() == listed  # Sobrevive a otra instancia.
+    with pytest.raises(ValueError):
+        repository.list_events(limit=0)
+
+
+def _cleanup(runtime):
+    with pika.BlockingConnection(runtime.connection_parameters()) as connection:
+        channel = connection.channel()
+        for name in (runtime.history_queue, runtime.requests_queue, runtime.errors_queue):
+            channel.queue_delete(queue=name)
+        channel.exchange_delete(exchange=runtime.dead_exchange)
+
+
+def test_terminal_events_reach_a_subscriber_through_the_broker(api, repository, core, broker_url, monkeypatch):
+    monkeypatch.setattr(config, "WORKER_POLL_SECONDS", 3600)
+    monkeypatch.setattr(config, "OUTBOX_POLL_SECONDS", 3600)
+    seed(repository, core, [msg("ok"), msg("bad", "[mock:fail]", at=BASE + timedelta(minutes=1))])
+    worker = worker_for(repository, core)
+    worker.start()
+    runtime = EventBroker(repository, url=broker_url, queue_prefix=f"test_{uuid4().hex}",
+                          on_request_received=worker.notify)
+    worker.on_result = runtime.notify
+    runtime.start()
+    api.app.state.broker = runtime
+    connection = None
+    try:
+        assert runtime.ready.wait(15)
+        connection = pika.BlockingConnection(runtime.connection_parameters())
+        channel = connection.channel()
+        queue = f"test_results_{uuid4().hex}"  # La cola y el binding son del consumidor (p. ej. el Gateway).
+        channel.queue_declare(queue=queue, durable=True)
+        for key in ("summary.generated", "summary.failed"):
+            channel.queue_bind(queue=queue, exchange="summaries", routing_key=key)
+
+        def receive():
+            method, properties, body = channel.basic_get(queue, auto_ack=True)
+            return (properties, json.loads(body)) if method else None
+
+        def post(start, end):
+            return api.post("/api/v1/channels/channel/summaries", json={"timeInterval": {
+                "start": start.isoformat(), "end": end.isoformat()}}).json()["summary_id"]
+
+        good = post(BASE - timedelta(minutes=1), BASE + timedelta(seconds=30))
+        properties, event = _wait(receive)
+        assert (event["type"], event["subject_id"]) == ("summary.generated", good)
+        assert event["data"]["messageState"] == "completada" and "content" not in event["data"]
+        assert properties.delivery_mode == 2 and properties.message_id == f"summary.generated:{good}"
+        bad = post(BASE + timedelta(seconds=30), BASE + timedelta(minutes=2))
+        properties, event = _wait(receive)
+        assert (event["type"], event["subject_id"]) == ("summary.failed", bad)
+        assert event["data"]["error"] == repository.get_summary(bad).error
+        assert channel.basic_get(queue)[0] is None  # Uno por solicitud: sin duplicados.
+        assert _terminal(repository, good)["published"] and _terminal(repository, bad)["published"]
+    finally:
+        runtime.stop()
+        worker.stop()
+        if connection is not None:
+            connection.close()
+        _cleanup(runtime)
+
+
+def test_events_without_subscribers_are_not_blocking_and_stay_listed(repository, core, broker_url):
+    seed(repository, core, [msg("m1")])
+    summary = received(repository, core)
+    repository.mark_request_published(summary.id)
+    worker_for(repository, core).drain()
+    runtime = EventBroker(repository, url=broker_url, queue_prefix=f"test_{uuid4().hex}")
+    runtime.start()
+    try:
+        assert runtime.ready.wait(15)
+        _wait(lambda: _terminal(repository, summary.id)["published"])
+        assert "summary.generated" in [e["type"] for e in repository.list_events()]
+    finally:
+        runtime.stop()
+        _cleanup(runtime)
+
+
+def test_failed_publication_is_recorded_and_the_next_process_delivers_it(repository, core, broker_url):
+    seed(repository, core, [msg("m1")])
+    summary = received(repository, core)
+    repository.mark_request_published(summary.id)
+    worker_for(repository, core).drain()  # Cae antes de publicar el resultado: queda en la outbox.
+    runtime = EventBroker(repository, url=broker_url, queue_prefix=f"test_{uuid4().hex}")
+    broken = MagicMock()
+    broken.basic_publish.side_effect = pika.exceptions.AMQPConnectionError("broker down")
+    with pytest.raises(pika.exceptions.AMQPConnectionError):
+        runtime._flush_outbox(broken)
+    delivery = _terminal(repository, summary.id)
+    assert not delivery["published"] and delivery["attempts"] == 1
+    assert delivery["last_error"].startswith("AMQPConnectionError")
+    assert len(repository.pending_terminal_events()) == 1
+    runtime.start()
+    try:
+        assert runtime.ready.wait(15)
+        _wait(lambda: _terminal(repository, summary.id)["published"])
+        delivery = _terminal(repository, summary.id)
+        assert (delivery["attempts"], delivery["last_error"]) == (2, None)
+        assert repository.get_summary(summary.id).messageState == MessageState.completada  # Sin repetir el LLM.
+    finally:
+        runtime.stop()
+        _cleanup(runtime)

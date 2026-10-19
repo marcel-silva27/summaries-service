@@ -3,7 +3,7 @@
 Invocar desde endpoints def o desde un hilo si el llamador es asíncrono.
 La orquestación y la publicación de eventos pertenecen a las siguientes etapas.
 """
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Callable, NamedTuple, TypeVar
 
 from bson.codec_options import CodecOptions
@@ -15,7 +15,7 @@ from pymongo.errors import BulkWriteError, DuplicateKeyError
 from .errors import PersistenceConflict, SummaryNotFound, SummaryStateConflict
 from .models import (
     Checkpoint, Digest, DomainModel, LocalMessage, MessageState, Summary,
-    SummaryRequest, TimeInterval, utc_now,
+    SummaryRequest, TimeInterval, make_event, utc_now,
 )
 
 Model = TypeVar("Model", bound=DomainModel)
@@ -28,7 +28,8 @@ def _decode(model: type[Model], document: dict | None) -> Model | None:
         return None
     return model.model_validate({key: value for key, value in document.items()
                                 if key not in ("_id", "_request_delivery", "_history", "_window",
-                                               "_lease", "_attempts", "_coverage_pending")})
+                                               "_lease", "_attempts", "_coverage_pending",
+                                               "_terminal_delivery")})
 
 
 def _document(model: DomainModel) -> dict:
@@ -74,6 +75,9 @@ class MongoRepository:
         self.summaries.create_index(
             [("_request_delivery.received", ASCENDING), ("messageState", ASCENDING)],
             name="request_inbox")
+        self.summaries.create_index(
+            [("_terminal_delivery.published", ASCENDING), ("updated_at", ASCENDING)],
+            name="terminal_delivery_pending")
         self.digests.create_index("id", unique=True, name="digest_id_unique")
         self.digests.create_index("summary_id", unique=True, name="digest_per_summary")
         self.digests.create_index(
@@ -96,17 +100,55 @@ class MongoRepository:
         if event_factory is not None:
             document["_request_delivery"] = {
                 "event": event_factory(summary), "published": False, "received": False,
+                "attempts": 0, "last_error": None,
             }
         self.summaries.insert_one(document)
         return summary
 
+    # --- Outbox: el evento se guarda en el mismo documento que el cambio que lo origina ---
+
     def pending_request_events(self, *, limit: int = 100) -> list[dict]:
-        self._pagination(limit, 0)
-        cursor = self.summaries.find({"_request_delivery.published": False}).sort(CHRONOLOGICAL).limit(limit)
-        return [document["_request_delivery"]["event"] for document in cursor]
+        return self._pending_events("_request_delivery", CHRONOLOGICAL, limit)
 
     def mark_request_published(self, summary_id: str) -> None:
-        self.summaries.update_one({"id": summary_id}, {"$set": {"_request_delivery.published": True}})
+        self._mark_published("_request_delivery", summary_id)
+
+    def record_request_delivery_error(self, summary_id: str, error: str) -> None:
+        self._record_delivery_error("_request_delivery", summary_id, error)
+
+    def pending_terminal_events(self, *, limit: int = 100) -> list[dict]:
+        """summary.generated / summary.failed aún no publicados, en orden de ocurrencia."""
+        return self._pending_events("_terminal_delivery", [("updated_at", ASCENDING), ("id", ASCENDING)], limit)
+
+    def mark_terminal_published(self, summary_id: str) -> None:
+        self._mark_published("_terminal_delivery", summary_id)
+
+    def record_terminal_delivery_error(self, summary_id: str, error: str) -> None:
+        self._record_delivery_error("_terminal_delivery", summary_id, error)
+
+    def _pending_events(self, field: str, order: list, limit: int) -> list[dict]:
+        self._pagination(limit, 0)
+        cursor = self.summaries.find({f"{field}.published": False}).sort(order).limit(limit)
+        return [document[field]["event"] for document in cursor]
+
+    def _mark_published(self, field: str, summary_id: str) -> None:
+        self.summaries.update_one({"id": summary_id}, {"$set": {f"{field}.published": True, f"{field}.last_error": None},
+                                                       "$inc": {f"{field}.attempts": 1}})
+
+    def _record_delivery_error(self, field: str, summary_id: str, error: str) -> None:
+        self.summaries.update_one({"id": summary_id}, {"$set": {f"{field}.last_error": error[:300]},
+                                                       "$inc": {f"{field}.attempts": 1}})
+
+    def list_events(self, *, limit: int = 100, offset: int = 0) -> list[dict]:
+        """Eventos durables emitidos por el servicio (solicitudes y resultados), más antiguos primero."""
+        self._pagination(limit, offset)
+        fetch = limit + offset
+        events = [d["_request_delivery"]["event"] for d in self.summaries.find(
+            {"_request_delivery": {"$exists": True}}).sort(CHRONOLOGICAL).limit(fetch)]
+        events += [d["_terminal_delivery"]["event"] for d in self.summaries.find(
+            {"_terminal_delivery": {"$exists": True}}).sort([("updated_at", ASCENDING), ("id", ASCENDING)]).limit(fetch)]
+        events.sort(key=lambda event: (datetime.fromisoformat(event["occurred_at"]), event["type"], event["subject_id"]))
+        return events[offset:offset + limit]
 
     def receive_summary_request(self, event: dict) -> None:
         document = self.summaries.find_one({"id": event["subject_id"]})
@@ -207,12 +249,17 @@ class MongoRepository:
     def _transition(self, summary_id: str, expected: list[MessageState], target: MessageState,
                     *, owner: str | None = None, **values) -> Summary:
         # $max evita retroceder updated_at incluso si el reloj local se corrige.
+        now = utc_now()
         query = {"id": summary_id, "messageState": {"$in": expected}}
         if owner is not None:
             query["_lease.owner"] = owner  # Un worker con lease vencido no confirma resultados.
-        update = {"$set": {"messageState": target, **values}, "$max": {"updated_at": utc_now()}}
+        update = {"$set": {"messageState": target, **values}, "$max": {"updated_at": now}}
         if target in (MessageState.completada, MessageState.fallida):
             update["$unset"] = {"_lease": ""}
+            # El evento terminal nace en la misma escritura que el estado: si hay estado, hay evento.
+            update["$set"]["_terminal_delivery"] = {
+                "event": self._terminal_event(self.get_summary(summary_id), target, values, now),
+                "published": False, "attempts": 0, "last_error": None}
         document = self.summaries.find_one_and_update(query, update, return_document=ReturnDocument.AFTER)
         if document is not None:
             return _decode(Summary, document)
@@ -221,6 +268,15 @@ class MongoRepository:
             if current.messageState == target and all(getattr(current, key) == val for key, val in values.items()):
                 return current
         raise SummaryStateConflict(f"Cannot move summary from {current.messageState.value} to {target.value}")
+
+    @staticmethod
+    def _terminal_event(summary: Summary, target: MessageState, values: dict, occurred_at: datetime) -> dict:
+        data = {"summary_id": summary.id, "channel_id": summary.channel_id,
+                "requested_by": summary.requested_by, "messageState": target.value}
+        if target == MessageState.fallida:
+            data["error"] = values["error"]
+        event_type = "summary.generated" if target == MessageState.completada else "summary.failed"
+        return make_event(event_type, summary.id, data, occurred_at=occurred_at)
 
     def save_digest(self, digest: Digest) -> Digest:
         summary = self.get_summary(digest.summary_id)

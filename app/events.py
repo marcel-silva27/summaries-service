@@ -3,8 +3,7 @@ import json
 import logging
 from math import isfinite
 from typing import Callable
-from datetime import datetime
-from threading import Event, Lock, Thread
+from threading import Event, Thread
 from time import monotonic
 
 import pika
@@ -13,13 +12,10 @@ from pymongo.errors import PyMongoError
 
 from . import config
 from .errors import ServiceError
-from .models import Identifier, LocalMessage, utc_now
+from .models import Identifier, LocalMessage, make_event  # noqa: F401  (make_event se reexporta)
 from .repository import MongoRepository
 
 logger = logging.getLogger(__name__)
-events: list[dict] = []
-_events_lock = Lock()
-_event_keys: set[tuple[str, str]] = set()
 
 
 class _Envelope(BaseModel):
@@ -28,31 +24,6 @@ class _Envelope(BaseModel):
     subject_id: Identifier
     occurred_at: AwareDatetime
     data: dict
-
-
-def make_event(event_type: str, subject_id: str, data: dict, *, occurred_at: datetime | None = None) -> dict:
-    return {"type": event_type, "subject_id": subject_id,
-            "occurred_at": (occurred_at or utc_now()).isoformat(), "data": data}
-
-
-def record_event(event: dict) -> None:
-    with _events_lock:
-        key = (event["type"], event["subject_id"])
-        if key not in _event_keys:
-            _event_keys.add(key)
-            events.append(event)
-
-
-def list_events() -> list[dict]:
-    with _events_lock:
-        return list(events)
-
-
-def publish(event_type: str, subject_id: str, data: dict) -> dict:
-    """Espejo local compatible con el esqueleto; resultados durables se integran en paso 8."""
-    event = make_event(event_type, subject_id, data)
-    record_event(event)
-    return event
 
 
 class EventBroker:
@@ -136,7 +107,7 @@ class EventBroker:
                     if self._wake.is_set() or monotonic() - last_flush >= config.OUTBOX_POLL_SECONDS:
                         self._wake.clear()
                         last_flush = monotonic()
-                        self._flush_requests(channel)
+                        self._flush_outbox(channel)
                     connection.process_data_events(time_limit=0.2)
             except (pika.exceptions.AMQPError, PyMongoError, OSError):
                 if not self._stop.is_set():
@@ -150,17 +121,32 @@ class EventBroker:
                         pass
             self._stop.wait(config.BROKER_RETRY_SECONDS)
 
-    def _flush_requests(self, channel) -> None:
-        for event in self.repository.pending_request_events():
+    def _flush_outbox(self, channel) -> None:
+        """Publicar solicitudes y resultados pendientes. Entrega al menos una vez, con identidad estable.
+
+        Las solicitudes tienen cola propia y se publican como `mandatory`. Los resultados
+        (summary.generated / summary.failed) no: sus consumidores (p. ej. un Gateway) declaran su
+        propia cola durable; sin suscriptores el evento no se pierde, queda en Mongo y en
+        `GET /api/v1/events`.
+        """
+        for event, mark, record_error, mandatory in (
+            *((e, self.repository.mark_request_published, self.repository.record_request_delivery_error, True)
+              for e in self.repository.pending_request_events()),
+            *((e, self.repository.mark_terminal_published, self.repository.record_terminal_delivery_error, False)
+              for e in self.repository.pending_terminal_events()),
+        ):
             if self._stop.is_set():
                 return
-            channel.basic_publish(
-                exchange=config.SUMMARIES_EXCHANGE, routing_key="summary.requested",
-                body=json.dumps(event, ensure_ascii=False).encode("utf-8"), mandatory=True,
-                properties=pika.BasicProperties(content_type="application/json", delivery_mode=2,
-                                                 message_id=f"summary.requested:{event['subject_id']}"))
-            self.repository.mark_request_published(event["subject_id"])
-            record_event(event)
+            try:
+                channel.basic_publish(
+                    exchange=config.SUMMARIES_EXCHANGE, routing_key=event["type"],
+                    body=json.dumps(event, ensure_ascii=False).encode("utf-8"), mandatory=mandatory,
+                    properties=pika.BasicProperties(content_type="application/json", delivery_mode=2,
+                                                     message_id=f"{event['type']}:{event['subject_id']}"))
+            except pika.exceptions.AMQPError as error:
+                record_error(event["subject_id"], f"{type(error).__name__}: {error}")
+                raise
+            mark(event["subject_id"])
 
     def _consume_history(self, channel, method, properties, body) -> None:
         self._consume(channel, method, body, "chat.message.created")

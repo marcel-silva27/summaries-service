@@ -69,7 +69,7 @@ El resumen prioriza decisiones tomadas, eventos y asignaciones de tareas.
 5. Construye/reutiliza la ventana de mensajes y llama a `POST <LLM_API>/generate` (paso 7).
 6. El LLM devuelve el resumen.
 7. El servicio guarda digest/summary y confirma la cobertura incremental en `summaries-mongodb`.
-8. Publica `summary.generated` (o `summary.failed`) con entrega fiable (paso 8).
+8. Publica `summary.generated` (o `summary.failed`) con entrega fiable.
 9. El Gateway consume los resultados y publicará la entrada al canal para el disparo automático (paso 9).
 10. El cliente hace polling con `GET /api/v1/summaries/{summary_id}` hasta recibir el resumen.
 
@@ -97,7 +97,7 @@ Propuesta completa (con diagramas de arquitectura y flujo end2end): https://clau
 | 5 | Los 3 `GET` restantes (por id, listado paginado, latest) | Hecho |
 | 6 | RabbitMQ: consumidor de `chat.message.created`, bandeja durable de `summary.requested` | Hecho |
 | 7 | Worker + cliente LLM (mock y Gemini) | Hecho |
-| 8 | Publicar `summary.generated` / `summary.failed` con entrega fiable | Pendiente |
+| 8 | Publicar `summary.generated` / `summary.failed` con entrega fiable | Hecho |
 | 9 | Resumen automático por entrada al canal (Gateway) y `messageThreshold` | Pendiente |
 | 10 | End2end, pulido, README y entrega pública | Pendiente |
 
@@ -156,10 +156,9 @@ Resueltos:
 - Los secretos ya no pasan por un archivo versionado (ver decisión de variables de entorno).
 - **Upsert en lote:** `MongoRepository.upsert_messages` (`bulk_write` no ordenado, lotes de 1000, misma semántica idempotente/de conflicto que `upsert_message`, que ahora delega en él). `build_window` reconcilia con una escritura por lote en vez de 2–3 consultas por mensaje.
 - **Outbox por aviso:** `EventBroker.notify()` (un `threading.Event`) despierta la publicación; `SummaryService.request_summary` lo invoca al crear la solicitud (inyectado desde `app.state.broker`). Sin aviso, solo hay un sondeo de respaldo cada `OUTBOX_POLL_SECONDS` (default 5 s) y una publicación al (re)conectar; ya no se consulta Mongo cada 0,2 s. El worker del paso 7 debe reutilizar este patrón (aviso + respaldo).
-- `compose.test.yaml`: `mongodb` con `ulimits nofile 64000`; con el límite de 1024 de algunos hosts Linux, WiredTiger abortaba (EMFILE) a mitad de la suite. Suite: 200 pruebas aprobadas.
+- `compose.test.yaml`: `mongodb` con `ulimits nofile 64000`; con el límite de 1024 de algunos hosts Linux, WiredTiger abortaba (EMFILE) a mitad de la suite. Suite: 210 pruebas aprobadas.
 
 Abiertos, por prioridad:
-- **Eventos:** la lista `events` en memoria no tiene límite y se pierde al reiniciar; `publish()` es heredado del esqueleto y no publica al broker.
 - **Operación:** `messages` del núcleo solo publica con `RABBITMQ_URL=amqp://summaries-rabbitmq:5672` aplicado por override en ejecución (repetir si se recrea el contenedor). El paso 9 depende de un Gateway que aún no existe.
 - **Docker:** la imagen corre como root y con `--reload`, y el volumen `./app` es de desarrollo; separar configuración de entrega.
 - **Documentación:** hay tres guías de ejecución (README, `INSTRUCCIONES.md`, `docs/REFERENCIA.md`); dejar una como autoridad. Verificar el conteo de pruebas citado en el README.
@@ -194,5 +193,16 @@ Chat base (`docker compose -p demo`, override `RABBITMQ_URL`) + summaries con Ge
 - Al bajar el chat con `docker compose -p demo down` desaparece la red `microsvcs` (la crea ese proyecto); los volúmenes se conservan.
 
 ### Pendiente tras el paso 7
-- El evento terminal (`summary.generated` / `summary.failed`) es del paso 8: el worker aún no publica nada al terminar.
 - Un resumen incremental cuyos mensajes pendientes sean todos más antiguos que 7 días termina `fallida` y no avanza el checkpoint; revisar en el paso 9 para evitar reintentos repetidos por el umbral.
+
+### Paso 8 — eventos terminales (hecho)
+- **Evento atómico con el estado:** `_transition` escribe `_terminal_delivery` (evento, `published`, `attempts`, `last_error`) en la misma operación que pasa a `completada`/`fallida`; un worker con lease vencido no lo escribe y re-confirmar no lo duplica.
+- **Contrato:** `summary.generated` / `summary.failed` en el exchange `summaries`; `data` = `summary_id`, `channel_id`, `requested_by`, `messageState` (+ `error` en failed). Sin contenido del resumen (se consulta por GET). Detalle en `docs/REFERENCIA.md`.
+- **Publicación:** `EventBroker._flush_outbox` publica solicitudes y resultados (persistente, confirmada, `message_id` estable); el worker avisa con `on_result` → `broker.notify`. Los resultados van **sin `mandatory`** porque aún no hay consumidor; quien se suscriba declara su cola durable enlazada a `summary.generated`/`summary.failed`.
+- **Eventos durables:** se eliminaron `publish()` y la lista en memoria; `GET /api/v1/events?limit&offset` lee de Mongo (`MongoRepository.list_events`). `make_event` vive en `models.py` (se reexporta desde `events.py`).
+- **Diagnóstico:** cada intento de publicación cuenta en `attempts`; un fallo guarda `last_error`.
+
+### Preparado para acoplar un Gateway (sin implementarlo)
+El servicio ya cumple su lado del contrato; al Gateway le corresponde:
+1. **Recibir resultados:** declarar una cola durable propia enlazada al exchange `summaries` con `summary.generated`/`summary.failed`, deduplicar por tipo + `summary_id` y consultar el contenido por `GET /api/v1/summaries/{id}`. Para ponerse al día tras estar caído: `GET /api/v1/events`.
+2. **Avisar la entrada a un canal (paso 9):** publicar `chat.channel.entered` (`channel_id`, `user_id`, `entry_id`) en el exchange `gateway` (propuesta en REFERENCIA.md). Mientras no exista, el paso 9 se probará con un publicador de prueba, no con una ruta nueva en este servicio.

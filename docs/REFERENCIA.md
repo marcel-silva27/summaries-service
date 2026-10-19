@@ -24,7 +24,7 @@ Documento global para conceptos, contratos y detalles de implementación. Las de
 | Exchange / routing key / cola | RabbitMQ enruta eventos de un exchange a colas según su tipo. |
 | Durable / persistente | Durable conserva la definición del exchange/cola; persistente conserva un mensaje si se configura su entrega. |
 | Ack / requeue | Confirmar un mensaje consumido o devolverlo a la cola. |
-| Outbox / inbox | Evento pendiente de publicación / trabajo recibido y guardado. Implementados para summary.requested; resultados pendientes del paso 8. |
+| Outbox / inbox | Evento pendiente de publicación / trabajo recibido y guardado. Implementados para summary.requested y para los eventos terminales (summary.generated / summary.failed). |
 | Snapshot / cobertura | IDs e intervalo fijados para una solicitud / marca de qué mensajes ya se confirmaron en un incremental. |
 | Dead letter | Mensaje rechazado que pasa a una cola de errores para inspección, sin reintento infinito. |
 | Lease / ownership | Permiso temporal de un worker para recuperar trabajo sin competir con uno anterior; aún pendiente. |
@@ -263,7 +263,7 @@ Hasta completar el paso 7, no hay transición automática a procesando/completad
 | Exchange | Tipo / durable | Uso |
 | --- | --- | --- |
 | chat | topic / false | Compatible con el publicador del curso |
-| summaries | topic / true | summary.requested; generated/failed en paso 8 |
+| summaries | topic / true | summary.requested, summary.generated, summary.failed |
 | summaries.deadletters | topic / true | Eventos rechazados por formato o conflicto |
 
 | Cola propia, durable | Binding | Confirmación |
@@ -280,7 +280,7 @@ Se valida envelope, routing key, subject y payload. JSON inválido, subject inco
 
 RabbitMQ usa volumen summaries-rabbitmq-data y hostname summaries-rabbitmq para mantener su identidad al recrear el contenedor; no expone puertos al host. El chat base y este servicio usan amqp://summaries-rabbitmq:5672. El override del README configura messages en ejecución; volver al compose original sin ese override elimina esa variable al recrearlo.
 
-`publish()` conserva el helper local del esqueleto; el camino durable de requested usa la outbox, no ese helper. GET /events devuelve una copia del espejo local y deduplica por tipo/subject; reiniciar pierde ese espejo, no la solicitud/evento guardados. Su lectura durable y generated/failed se completarán en el paso 8.
+El helper `publish()` y el espejo en memoria se eliminaron: todos los eventos del servicio son durables (outbox en el documento del summary). `GET /api/v1/events?limit&offset` los lee de Mongo, más antiguos primero.
 
 Referencias: [Pika 1.3.2, BlockingConnection](https://pika.readthedocs.io/en/1.3.2/modules/adapters/blocking.html) y [RabbitMQ dead-letter exchanges](https://www.rabbitmq.com/docs/dlx).
 
@@ -296,11 +296,14 @@ Estas interfaces orientan los pasos 7–9; **todavía no están implementadas**.
 
 **Límites de ventana** (`services.limit_window`, desde los mensajes más recientes): `LLM_MAX_DAYS` (7, contados hacia atrás desde el fin de la ventana), `LLM_MAX_MESSAGES` (500) y `LLM_MAX_INPUT_CHARS` (400000); siempre se conserva el mensaje más reciente salvo que todos superen los 7 días. Lo omitido se guarda en el snapshot (`omitted_ids`), en `Digest.omitted_count` y se anota al final del resumen. En resúmenes incrementales los omitidos **se dan por cubiertos** al avanzar el checkpoint (si no, el umbral automático se dispararía para siempre por mensajes que nunca se resumirán); en resúmenes por `timeInterval` no se toca la cobertura.
 
-### Eventos terminales — paso 8
+### Eventos terminales — paso 8 (implementado)
 
-Mismo envelope del curso, subject_id=summary_id y exchange summaries. Routing keys summary.generated / summary.failed; data contendrá summary_id, channel_id y messageState; failed añadirá un error legible sin secretos. El contenido canónico se consulta por GET, no se reconstruye a partir de notificaciones.
+Mismo envelope del curso (`type`, `subject_id`=summary_id, `occurred_at`, `data`) en el exchange `summaries` (topic, durable); la routing key es el tipo. `data` contiene `summary_id`, `channel_id`, `requested_by` (quién lo pidió, o `null`; sirve para que un Gateway sepa a quién avisar) y `messageState`; `summary.failed` añade `error` (legible, sin secretos). **El contenido del resumen no viaja en el evento**: se consulta por `GET /api/v1/summaries/{id}`.
 
-La outbox terminal se guardará con el estado en el mismo documento. Su publicación será confirmada/reintentable y el consumidor del Gateway deberá deduplicar por tipo/summary_id. No se publicarán ambos estados terminales para una misma solicitud.
+- **Atomicidad:** el evento se guarda en `_terminal_delivery` en la misma escritura que cambia el estado a `completada`/`fallida` (`MongoRepository._transition`). Si hay estado terminal, hay evento; un worker con lease vencido no escribe ninguno, y confirmar de nuevo un estado terminal no crea otro. Nunca hay ambos eventos para una solicitud.
+- **Publicación:** el hilo de RabbitMQ publica la outbox (solicitudes y resultados) con mensajes persistentes, confirmación y `message_id = "{tipo}:{summary_id}"`; el worker avisa con `notify` al terminar y hay un sondeo de respaldo (`OUTBOX_POLL_SECONDS`). Entrega al menos una vez: un consumidor debe deduplicar por tipo + `summary_id`. Cada intento incrementa `attempts` y un fallo guarda `last_error` (máx. 300 caracteres) para diagnóstico.
+- **Sin suscriptores:** los resultados se publican **sin `mandatory`**. Un consumidor (p. ej. el Gateway) debe declarar su propia cola durable y enlazarla a `summaries` con `summary.generated` / `summary.failed` (o `summary.*`); lo publicado antes de ese enlace no llega a la cola, pero sigue en `GET /api/v1/events` para ponerse al día.
+- **Recuperación:** si el proceso cae tras cambiar el estado y antes de publicar, el evento queda pendiente y se publica al reiniciar, sin repetir la llamada al LLM. La cobertura del checkpoint se recupera por separado (`_coverage_pending`).
 
 ### Entrada del Gateway — paso 9
 

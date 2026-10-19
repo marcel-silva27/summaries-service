@@ -467,7 +467,7 @@ def test_outbox_survives_failed_publication_and_next_process_can_deliver(api, re
     channel = MagicMock()
     channel.basic_publish.side_effect = pika.exceptions.AMQPConnectionError("broker down")
     with pytest.raises(pika.exceptions.AMQPConnectionError):
-        runtime._flush_requests(channel)
+        runtime._flush_outbox(channel)
     assert len(repository.pending_request_events()) == 1
     runtime.start()
     try:

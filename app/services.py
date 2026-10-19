@@ -7,9 +7,8 @@ from fastapi import Depends, Request
 
 from . import config
 from .clients.core_client import CoreClient, CoreClientDependency
-from .events import make_event, record_event
 from .errors import PersistenceConflict
-from .models import Checkpoint, LocalMessage, Summary, SummaryRequest, TimeInterval
+from .models import Checkpoint, LocalMessage, Summary, SummaryRequest, TimeInterval, make_event
 from .repository import MongoRepository, RepositoryDependency
 
 
@@ -43,8 +42,6 @@ class SummaryService:
                 occurred_at=item.created_at)
 
         summary = self.repository.create_summary(channel_id, request, event_factory=event_for)
-        # El evento durable está en Mongo; esta lista es solo el espejo del curso.
-        record_event(event_for(summary))
         self.on_request_created()
         return summary
 

@@ -25,6 +25,12 @@ Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=
 NonEmptyText = Annotated[str, StringConstraints(min_length=1)]
 
 
+def make_event(event_type: str, subject_id: str, data: dict, *, occurred_at: datetime | None = None) -> dict:
+    """Evento con el sobre del curso: type, subject_id, occurred_at (ISO8601 UTC) y data."""
+    return {"type": event_type, "subject_id": subject_id,
+            "occurred_at": (occurred_at or utc_now()).isoformat(), "data": data}
+
+
 class DomainModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

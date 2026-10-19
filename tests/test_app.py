@@ -43,6 +43,9 @@ def test_lifespan_injects_repository_and_preserves_existing_api(repository, mong
                      "/api/v1/channels/{channel_id}/summaries/latest"):
             assert path in schema["paths"]
         assert client.post("/api/v1/channels/channel/summaries").status_code == 202
+        events = client.get("/api/v1/events", params={"limit": 5}).json()  # Durables: vienen de Mongo.
+        assert [e["type"] for e in events] == ["summary.requested"]
+        assert client.get("/api/v1/events", params={"limit": 0}).status_code == 422
         assert client.get("/api/v1/channels/channel/summaries").status_code == 200
         assert client.get("/api/v1/channels/channel/summaries/latest").status_code == 404
         assert client.get("/api/v1/summaries/summary").status_code == 404

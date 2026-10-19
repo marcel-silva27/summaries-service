@@ -1,7 +1,9 @@
 """Servicio de Resúmenes: resúmenes de chat generados por LLM."""
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from typing import Annotated
+
+from fastapi import FastAPI, Query
 from pymongo import MongoClient
 from starlette.concurrency import run_in_threadpool
 
@@ -9,9 +11,9 @@ from . import config
 from .clients.core_client import CoreClient
 from .clients.llm_client import build_provider
 from .errors import register_handlers
-from .events import EventBroker, list_events as event_snapshot
+from .events import EventBroker
 from .routes import summaries
-from .repository import MongoRepository
+from .repository import MongoRepository, RepositoryDependency
 from .worker import SummaryWorker
 
 
@@ -33,6 +35,7 @@ async def lifespan(app: FastAPI):
             app.state.worker = worker
             broker = EventBroker(repository, on_request_received=worker.notify)
             app.state.broker = broker
+            worker.on_result = broker.notify  # Publicar el evento terminal sin esperar al sondeo.
             worker.start()
             broker.start()
             try:
@@ -60,6 +63,8 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/api/v1/events", tags=["events"])
-def list_events():
-    return event_snapshot()
+@app.get("/api/v1/events", tags=["events"],
+         summary="Eventos durables del servicio (solicitudes y resultados), más antiguos primero")
+def list_events(repository: RepositoryDependency, limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+                offset: Annotated[int, Query(ge=0)] = 0):
+    return repository.list_events(limit=limit, offset=offset)

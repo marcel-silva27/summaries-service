@@ -6,6 +6,7 @@ vencidos: solo el dueño vigente puede completar o fallar una solicitud.
 """
 import logging
 from threading import Event, Thread
+from typing import Callable
 from uuid import uuid4
 
 from pymongo.errors import PyMongoError
@@ -43,6 +44,8 @@ class SummaryWorker:
         self._wake = Event()
         self._stop = Event()
         self._thread: Thread | None = None
+        # Avisa a la outbox que hay un evento terminal por publicar (lo conecta main.py).
+        self.on_result: Callable[[], None] = lambda: None
 
     def notify(self) -> None:
         """Avisar que hay trabajo; seguro desde cualquier hilo."""
@@ -130,6 +133,8 @@ class SummaryWorker:
             self.repository.fail_summary(summary.id, reason, owner=self.owner)
         except SummaryStateConflict:
             logger.warning("Could not fail %s: no longer owned", summary.id)
+        else:
+            self.on_result()
 
     def _generate(self, summary: Summary) -> None:
         window = self.service.build_window(summary.id)
@@ -138,9 +143,9 @@ class SummaryWorker:
             self._call_llm(summary, window)
         self._require_lease(summary)
         self.repository.complete_summary(summary.id, owner=self.owner)
+        self.on_result()
         if summary.timeInterval is None:
             self.repository.advance_checkpoint(summary.id)
-        # El evento terminal (summary.generated / summary.failed) se publica en el paso 8.
 
     def _call_llm(self, summary: Summary, window: MessageWindow) -> None:
         if not window.messages:
