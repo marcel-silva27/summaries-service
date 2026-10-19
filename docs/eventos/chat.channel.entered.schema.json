@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "chat.channel.entered",
+  "$defs": {
+    "ChannelEntry": {
+      "additionalProperties": false,
+      "description": "Entrada de un usuario a un canal, publicada por el Gateway (`chat.channel.entered`).",
+      "properties": {
+        "channel_id": {
+          "minLength": 1,
+          "title": "Channel Id",
+          "type": "string"
+        },
+        "user_id": {
+          "minLength": 1,
+          "title": "User Id",
+          "type": "string"
+        },
+        "entry_id": {
+          "minLength": 1,
+          "title": "Entry Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "channel_id",
+        "user_id",
+        "entry_id"
+      ],
+      "title": "ChannelEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Lo publica el Gateway al entrar un usuario a un canal (exchange `gateway`). `subject_id` = `channel_id`.",
+  "examples": [
+    {
+      "data": {
+        "channel_id": "84e015c1-ed09-470c-b584-6f6210ea219c",
+        "entry_id": "entry-1",
+        "user_id": "b64bb09f-7517-49c8-b701-58a5b8e297f5"
+      },
+      "occurred_at": "2026-10-19T05:20:00+00:00",
+      "subject_id": "84e015c1-ed09-470c-b584-6f6210ea219c",
+      "type": "chat.channel.entered"
+    }
+  ],
+  "properties": {
+    "subject_id": {
+      "minLength": 1,
+      "title": "Subject Id",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "type": {
+      "const": "chat.channel.entered",
+      "title": "Type",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/ChannelEntry"
+    }
+  },
+  "required": [
+    "subject_id",
+    "occurred_at",
+    "type",
+    "data"
+  ],
+  "type": "object"
+}

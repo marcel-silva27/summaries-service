@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "summary.failed",
+  "$defs": {
+    "SummaryFailedData": {
+      "additionalProperties": false,
+      "properties": {
+        "summary_id": {
+          "minLength": 1,
+          "title": "Summary Id",
+          "type": "string"
+        },
+        "channel_id": {
+          "minLength": 1,
+          "title": "Channel Id",
+          "type": "string"
+        },
+        "requested_by": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Quién lo pidió; sirve para saber a quién avisar.",
+          "title": "Requested By"
+        },
+        "messageState": {
+          "const": "fallida",
+          "title": "Messagestate",
+          "type": "string"
+        },
+        "error": {
+          "description": "Motivo legible, sin secretos.",
+          "minLength": 1,
+          "title": "Error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary_id",
+        "channel_id",
+        "requested_by",
+        "messageState",
+        "error"
+      ],
+      "title": "SummaryFailedData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Se publica al fallar un resumen.",
+  "examples": [
+    {
+      "data": {
+        "channel_id": "84e015c1-ed09-470c-b584-6f6210ea219c",
+        "error": "No hay mensajes en la ventana solicitada",
+        "messageState": "fallida",
+        "requested_by": null,
+        "summary_id": "33214886-541a-4197-931d-e2ec5360c9f8"
+      },
+      "occurred_at": "2026-10-19T05:44:11.329000+00:00",
+      "subject_id": "33214886-541a-4197-931d-e2ec5360c9f8",
+      "type": "summary.failed"
+    }
+  ],
+  "properties": {
+    "subject_id": {
+      "minLength": 1,
+      "title": "Subject Id",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "type": {
+      "const": "summary.failed",
+      "title": "Type",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/SummaryFailedData"
+    }
+  },
+  "required": [
+    "subject_id",
+    "occurred_at",
+    "type",
+    "data"
+  ],
+  "type": "object"
+}

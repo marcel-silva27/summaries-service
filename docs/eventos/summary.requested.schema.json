@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "summary.requested",
+  "$defs": {
+    "SummaryRequestedData": {
+      "additionalProperties": false,
+      "properties": {
+        "channel_id": {
+          "minLength": 1,
+          "title": "Channel Id",
+          "type": "string"
+        },
+        "requested_by": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Quién lo pidió; `null` si no se indicó.",
+          "title": "Requested By"
+        },
+        "timeInterval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeInterval"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Intervalo pedido; `null` = incremental."
+        },
+        "trigger": {
+          "anyOf": [
+            {
+              "const": "automatic",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Presente solo en solicitudes automáticas (entrada a un canal).",
+          "title": "Trigger"
+        },
+        "entry_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Entrada que originó una solicitud automática.",
+          "title": "Entry Id"
+        }
+      },
+      "required": [
+        "channel_id",
+        "requested_by",
+        "timeInterval"
+      ],
+      "title": "SummaryRequestedData",
+      "type": "object"
+    },
+    "TimeInterval": {
+      "additionalProperties": false,
+      "description": "Ventana UTC semiabierta: start <= created_at < end.",
+      "properties": {
+        "start": {
+          "description": "Inicio (incluido). ISO 8601 con zona horaria.",
+          "examples": [
+            "2026-10-19T09:00:00Z"
+          ],
+          "format": "date-time",
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "description": "Fin (excluido). Debe ser posterior a `start`.",
+          "examples": [
+            "2026-10-19T18:00:00Z"
+          ],
+          "format": "date-time",
+          "title": "End",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "TimeInterval",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Se publica al guardar una solicitud (manual o automática). Lo consume el propio servicio.",
+  "examples": [
+    {
+      "data": {
+        "channel_id": "84e015c1-ed09-470c-b584-6f6210ea219c",
+        "requested_by": null,
+        "timeInterval": null
+      },
+      "occurred_at": "2026-10-19T05:14:58.123000+00:00",
+      "subject_id": "08ac19f0-b81f-413c-be12-416d99f2672d",
+      "type": "summary.requested"
+    },
+    {
+      "data": {
+        "channel_id": "84e015c1-ed09-470c-b584-6f6210ea219c",
+        "entry_id": "entry-1",
+        "requested_by": "b64bb09f-7517-49c8-b701-58a5b8e297f5",
+        "timeInterval": null,
+        "trigger": "automatic"
+      },
+      "occurred_at": "2026-10-19T05:20:00+00:00",
+      "subject_id": "7ba720a7-8067-4329-bdf8-539abd0cc9af",
+      "type": "summary.requested"
+    }
+  ],
+  "properties": {
+    "subject_id": {
+      "minLength": 1,
+      "title": "Subject Id",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "type": {
+      "const": "summary.requested",
+      "title": "Type",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/SummaryRequestedData"
+    }
+  },
+  "required": [
+    "subject_id",
+    "occurred_at",
+    "type",
+    "data"
+  ],
+  "type": "object"
+}

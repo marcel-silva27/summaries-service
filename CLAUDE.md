@@ -1,230 +1,91 @@
-# Servicio de Resúmenes — Contexto del proyecto
+# Servicio de Resúmenes — contexto del proyecto
 
-Capacidad vertical para la cátedra de Microservicios (Unidad 4 en adelante). Se construye sobre el chat base del curso (`users`, `channels`, `messages`), que corre en `localhost:8001/8002/8003` y expone su material en https://github.com/rmasad/microservicios.
+Microservicio vertical para la cátedra de Microservicios (trabajo final). Se construye sobre el chat base del curso (`users`, `channels`, `messages`; `localhost:8001/8002/8003`, material en https://github.com/rmasad/microservicios). Repositorio público: https://github.com/marcel-silva27/summaries-service.
 
-## Problema que resuelve
+**Enunciado:** implementar el microservicio asignado como API REST, emitir eventos por cada transacción, con documentación, esquemas, versionamiento y manejo de errores; correr con Docker/docker-compose; código en un repositorio público. *No* exige Gateway, GraphQL ni despliegue en Kubernetes.
 
-En chats grupales con alto volumen de mensajes, los usuarios pierden contexto cuando no revisan el chat por un tiempo. El servicio genera resúmenes automáticos vía IA de dos formas:
+Este archivo es el contexto estable del proyecto. Detalle técnico: [`docs/REFERENCIA.md`](./docs/REFERENCIA.md). Cómo ejecutarlo: [`README.md`](./README.md). Qué se verificó: [`docs/VERIFICACION.md`](./docs/VERIFICACION.md). Reglas rápidas para agentes: [`AGENTS.md`](./AGENTS.md).
 
-- Bajo demanda, acotado a un `timeInterval`.
-- Automáticamente al entrar al chat, si hay más de `messageThreshold` mensajes nuevos desde el último resumen.
+## Qué hace
 
-El resumen prioriza decisiones tomadas, eventos y asignaciones de tareas.
+En chats grupales con mucho volumen se pierde contexto. El servicio genera resúmenes con un LLM, priorizando **decisiones, eventos y tareas asignadas**, de dos formas:
+
+- **Bajo demanda**, opcionalmente acotado a un `timeInterval`.
+- **Automáticamente** cuando un usuario entra a un canal con más de `MESSAGE_THRESHOLD` mensajes nuevos sin resumir.
 
 ## Lenguaje ubicuo
 
 | Término | Significado |
 | --- | --- |
-| `summary` | Resumen generado para un canal, con su contenido y metadatos |
-| `digest` | Resultado inmutable del LLM para una solicitud, con contenido y trazabilidad de su ventana efectiva; relación 1:1 con summary |
-| `checkpoint` | Cursor por canal del último resumen incremental confirmado; no es un cursor de lectura por usuario |
-| `LocalMessage` | Proyección local del contrato público de messages, reconstruible desde sus APIs/eventos |
-| `timeInterval` | Rango horario solicitado para acotar los mensajes a resumir |
-| `messageThreshold` | N° límite de mensajes nuevos que gatilla un resumen automático |
-| `messageState` | Estado de una solicitud: `pendiente`, `procesando`, `completada`, `fallida` |
+| `summary` | Resumen de un canal: estado, contenido (`content`, texto) y `structured` (campos) |
+| `digest` | Resultado inmutable del LLM para una solicitud, con la trazabilidad de su ventana; 1:1 con `summary` |
+| `checkpoint` | Cursor por canal del último resumen incremental confirmado (no es lectura por usuario) |
+| `LocalMessage` | Copia local reconstruible de los mensajes del chat; la fuente de verdad es `messages` |
+| `timeInterval` | Rango `[start, end)` pedido para acotar los mensajes |
+| `messageThreshold` | Mensajes nuevos que, superados, gatillan un resumen automático |
+| `messageState` | `pendiente` → `procesando` → `completada` \| `fallida` |
 
 ## Frontera de responsabilidad
 
-- Este servicio es dueño exclusivo de `summary`, `digest` y `checkpoint`, en su propia base `summaries-mongodb`.
-- **No** accede a las bases de datos de `users`, `channels` ni `messages`. Toda interacción con el núcleo pasa por sus APIs públicas o por los eventos que ellos publican en `/api/v1/events`.
-- Puede usar IDs de usuarios, canales y mensajes para relacionar un resumen con su contexto, pero no es propietario de esas entidades.
+- Es dueño exclusivo de `summary`, `digest` y `checkpoint` (más el historial local y las entradas a canales), en su propia base `summaries-mongodb`.
+- **Nunca** accede a las bases de `users`, `channels` ni `messages`: solo a sus APIs públicas y a los eventos del broker. Puede guardar IDs de esas entidades, pero no es su dueño.
+- No se modifican archivos del repositorio del curso.
 
-## Decisión de arquitectura: asíncrono con polling
+## Arquitectura
 
-`POST /api/v1/channels/{channel_id}/summaries` **no bloquea** esperando al LLM. Responde `202 Accepted` + `summary_id` de inmediato. El cliente hace polling a `GET /api/v1/summaries/{summary_id}` hasta que `messageState` sea `completada` o `fallida`.
+**Asíncrono con polling.** `POST /api/v1/channels/{id}/summaries` no espera al LLM: valida el canal, guarda la solicitud junto con su evento `summary.requested` y responde `202` + `summary_id`. El cliente consulta `GET /api/v1/summaries/{id}` hasta `completada` o `fallida`.
 
-## APIs expuestas
+```text
+POST → Mongo (solicitud + evento) → RabbitMQ summary.requested → inbox → worker → LLM → digest + estado + checkpoint
+                                                                                    └→ summary.generated | summary.failed
+```
 
-| Método | Ruta | Función |
-| --- | --- | --- |
-| POST | `/api/v1/channels/{channel_id}/summaries` | Solicitar un resumen (202 + `summary_id`) |
-| GET | `/api/v1/summaries/{summary_id}` | Estado/contenido de un resumen |
-| GET | `/api/v1/channels/{channel_id}/summaries` | Listar resúmenes de un canal |
-| GET | `/api/v1/channels/{channel_id}/summaries/latest` | Último resumen disponible |
+Piezas (`app/`): `routes/` (REST), `services.py` (solicitudes, ventanas, entradas), `worker.py` (generación con lease y reintentos), `events.py` (hilo de RabbitMQ: consumo y outbox), `repository.py` (PyMongo), `clients/core_client.py` (users/channels/messages) y `clients/llm_client.py` (mock y Gemini), `event_schemas.py` (esquemas de eventos), `models.py`, `errors.py`.
 
-## APIs consumidas del núcleo
+| API expuesta | Función |
+| --- | --- |
+| `POST /api/v1/channels/{id}/summaries` | Solicitar un resumen (202) |
+| `GET /api/v1/summaries/{id}` | Estado y contenido (polling) |
+| `GET /api/v1/channels/{id}/summaries` | Listar (paginado) |
+| `GET /api/v1/channels/{id}/summaries/latest` | Último completado |
+| `GET /api/v1/events` | Eventos durables del servicio |
 
-| Método | Ruta | Función |
-| --- | --- | --- |
-| GET | `/api/v1/channels/{channel_id}` | Validar que el canal exista |
-| GET | `/api/v1/users/{user_id}` | Validar que el usuario exista |
-| GET | `/api/v1/channels/{channel_id}/messages` | Completar/reconstruir la ventana de mensajes |
-| POST | `<LLM_API>/generate` | Enviar mensajes + prompt, recibir el resumen |
+| Evento | Dirección |
+| --- | --- |
+| `chat.message.created` | Consume (historial local) |
+| `summary.requested` | Publica y consume |
+| `summary.generated` / `summary.failed` | Publica |
+| `chat.channel.entered` | Consume (lo publicaría un Gateway) |
 
-## Eventos
+## Decisiones vigentes
 
-| Evento | Dirección | Función |
-| --- | --- | --- |
-| `chat.message.created` | Consumido (continuo, en paralelo) | Mantener al día el historial local, independiente de cualquier solicitud |
-| `summary.requested` | Publicado y consumido | Registra el trabajo para el worker de generación |
-| `summary.generated` | Publicado | El resumen se generó correctamente |
-| `summary.failed` | Publicado | La generación del resumen falló |
+- **Entrega al menos una vez** con outbox/inbox dentro del documento del resumen: el evento se guarda en la misma escritura que el cambio que lo origina; los consumidores deduplican.
+- **Lease con dueño** para el worker; si se cae, otro retoma la solicitud sin repetir la llamada al LLM si el digest ya existe.
+- **Salida estructurada**: el LLM devuelve JSON validado con Pydantic (`StructuredSummary`); el texto `content` lo arma el código.
+- **Ventana al LLM**: 7 días, 500 mensajes y 400 000 caracteres, desde los más recientes; lo omitido se registra y, en incrementales, se da por cubierto.
+- **LLM**: `mock` por defecto; Gemini con modelo principal `gemini-3.5-flash-lite` y respaldo `gemini-3.8-flash` (cuota gratuita informada: 15 RPM/500 RPD y 5 RPM/20 RPD). Sin proveedor de pago.
+- **Un solo broker**: `summaries-rabbitmq`, compartido con `messages` mediante un *override* de `RABBITMQ_URL` (README).
+- **pymongo síncrono** (como el curso), `httpx`, `pika`; Python 3.12; puerto host 8004.
+- **Secretos**: `LLM_API_KEY` solo en `.env` (ignorado por git), **nunca** en `.env.example`, que está versionado.
+- **Docker**: imagen no root con healthcheck y sin `--reload`; desarrollo con `docker-compose.dev.yaml`.
 
-## Flujo end2end (10 pasos, el 3 corre en paralelo y continuo)
+## Hallazgos del curso que afectan al servicio
 
-1. Cliente: `POST /api/v1/channels/{channel_id}/summaries` → el servicio valida referencias, guarda solicitud/evento y responde `202` + `summary_id`.
-2. El publicador del servicio envía `summary.requested` al broker.
-3. *(paralelo, continuo)* `messages` publica `chat.message.created`; el servicio mantiene su historial local al día.
-4. El servicio consume `summary.requested` y registra su recepción durable; el worker del paso 7 tomará ese trabajo.
-5. Construye/reutiliza la ventana de mensajes y llama a `POST <LLM_API>/generate` (paso 7).
-6. El LLM devuelve el resumen.
-7. El servicio guarda digest/summary y confirma la cobertura incremental en `summaries-mongodb`.
-8. Publica `summary.generated` (o `summary.failed`) con entrega fiable.
-9. El Gateway consume los resultados y publicará la entrada al canal para el disparo automático (paso 9).
-10. El cliente hace polling con `GET /api/v1/summaries/{summary_id}` hasta recibir el resumen.
+- **Bug del demo**: sus `POST` de creación responden 500 aunque guardan el dato, y `messages` **nunca publica `chat.message.created`** (no puede serializar el `_id` de Mongo). Por eso el servicio reconcilia el historial con `GET .../messages` en cada ventana; no es un respaldo menor. No se tocó el código del curso; conviene avisar al profesor.
+- `messages` solo publica con `RABBITMQ_URL`, que su compose no define; el exchange `chat` es topic **no durable** y debe declararse igual.
+- `GET .../messages` devuelve todo el canal sin paginar ni filtrar por fecha, y `[]` aunque el canal no exista.
+- No existe Gateway del chat. El del demo de la Unidad 4 es de otro dominio y no usa el broker. Detalle en `docs/REFERENCIA.md`.
 
-## Stack sugerido / restricciones de la tarea
+## Limitaciones conocidas
 
-- FastAPI para la API REST.
-- Debe correr con Docker/docker-compose, en la red `microsvcs` del chat base.
-- Documentación OpenAPI, versionamiento y manejo de errores explícitos.
-- Emitir un evento por cada transacción.
-- Repositorio público para la entrega.
+- Sin autenticación (el chat base tampoco la tiene).
+- `chat.channel.entered` hoy se prueba con `python -m app.tools.publish_channel_entered`; no hay un productor real.
+- Las capas gratuitas de Gemini pueden usar los mensajes enviados para mejorar sus modelos y el respaldo también puede saturarse (503): usar datos ficticios.
 
-## Documento fuente
+## Cómo trabajar aquí
 
-Propuesta completa (con diagramas de arquitectura y flujo end2end): https://claude.ai/artifact/BSeEEVB7yRPouL1wqsg497
-
-## Estado de implementación
-
-### Progreso por paso
-| Paso | Descripción | Estado |
-| --- | --- | --- |
-| 1 | Esqueleto FastAPI, Dockerfile, compose (Mongo + RabbitMQ), `/health` | Hecho |
-| 2 | Modelos y repositorio Mongo (summaries, digests, checkpoints, messages) | Hecho |
-| 3 | Cliente del núcleo con errores explícitos | Hecho |
-| 4 | `POST /channels/{id}/summaries` (202 + Location) y ventanas de mensajes | Hecho |
-| 5 | Los 3 `GET` restantes (por id, listado paginado, latest) | Hecho |
-| 6 | RabbitMQ: consumidor de `chat.message.created`, bandeja durable de `summary.requested` | Hecho |
-| 7 | Worker + cliente LLM (mock y Gemini) | Hecho |
-| 8 | Publicar `summary.generated` / `summary.failed` con entrega fiable | Hecho |
-| 9 | Resumen automático por entrada al canal (Gateway) y `messageThreshold` | Hecho (lado summaries; sin Gateway real) |
-| 10 | End2end, pulido, README y entrega pública | Hecho (falta el merge a `main`) |
-
-El POST devuelve 202 y el worker la completa (con `mock` o Gemini). Servicio en `localhost:8004` (`/docs`, `/health`); requiere el chat base corriendo (crea la red `microsvcs`, aquí `external: true`).
-
-Archivos:
-- `app/main.py`: lifespan de Mongo/HTTP y del hilo RabbitMQ, health y events.
-- `app/models.py`, `app/repository.py`: summaries, digests, checkpoints e historial local.
-- `app/clients/core_client.py`: get_channel, get_user y list_messages con validación y errores explícitos. `llm_client.py`: `LLMProvider`/`LLMRequest`, `MockProvider`, `GeminiProvider` y `build_provider`.
-- `app/worker.py`: worker de generación (lease con dueño, intentos, recuperación de cobertura, límites de ventana).
-- `app/services.py`: solicitudes y ventanas reconciliadas, con snapshot inmutable y cobertura de tardíos.
-- `app/events.py`: publicador/consumidores, confirmaciones, reconexión y cola de errores.
-- `tests/`: pruebas con Mongo/RabbitMQ reales (`compose.test.yaml`, `Dockerfile.test`; ejecución en README e `INSTRUCCIONES.md`, que está en PowerShell). Conceptos y contratos en [docs/REFERENCIA.md](./docs/REFERENCIA.md), que también contiene los hallazgos del código base del curso.
-- El trabajo de los pasos 2–6 entró por la rama `avance-paso-2-3-4-5-6` (PR #1 a `main`). Repo: https://github.com/marcel-silva27/summaries-service
-
-### Decisiones tomadas
-- **RabbitMQ propio** en el compose (`summaries-rabbitmq`, `rabbitmq:4-management-alpine`) sin publicar puertos al host, porque 5672/15672 suelen estar ocupados por otros proyectos locales. Ojo: el `messages` del núcleo solo publica si se le define `RABBITMQ_URL` apuntando a un broker que este servicio pueda alcanzar; hay que usar el **mismo broker** (decidir si el núcleo apunta a `summaries-rabbitmq` o este servicio al del núcleo).
-- **`pymongo` síncrono** (como el curso), sin `motor`; `httpx` para clientes HTTP; `pika` para el broker.
-- **Variables de entorno y secretos:** `docker-compose.yaml` carga `.env.example` (valores por defecto versionados, sin secretos) y luego `.env` (opcional, ignorado por git) que lo sobrescribe. Las credenciales reales (`LLM_API_KEY`) van **solo** en `.env`, nunca en `.env.example`. Compose fija `MONGODB_URL`; `BROKER_URL` admite override.
-- Puerto host `8004` → contenedor `8000`.
-
-### Decisiones tomadas (paso 2)
-- **Persistencia:** base summaries; colecciones summaries, digests, checkpoints y messages; volumen propio y sin TTL.
-- **Digest:** resultado inmutable, uno por summary; IDs públicos string y claves únicas en Mongo.
-- **Estados:** transiciones condicionales; un solo claim y estados terminales idempotentes.
-- **Consultas:** UTC en milisegundos, ventanas [start,end), orden por fecha/ID; latest considera solo completados.
-- **Checkpoint:** por canal, avance explícito solo tras resumen incremental completado; messages_since calculado al leer.
-- **Atomicidad:** por documento; digest → summary → checkpoint. Eventos y recuperación en la orquestación.
-
-### Decisiones tomadas (paso 3)
-- **HTTP:** un CoreClient síncrono compartido en el lifespan, con pool, timeout configurable y cierre al apagar.
-- **Contratos:** respuestas validadas, sin filtrar ni truncar historial; canal validado por get_channel, no por una lista vacía.
-- **Errores:** 404 de usuario → 422; 404 de canal → 404; indisponibilidad → 503; respuesta inválida → 502. Sin reintentos automáticos ni redirecciones.
-
-### Decisiones tomadas (paso 4)
-- **Ventanas:** reconciliar por API antes del primer armado; guardar IDs/intervalo como snapshot por solicitud y reutilizarlo en reintentos.
-- **Incrementales:** seleccionar mensajes sin cobertura, incluidos los tardíos; marcar solo los IDs confirmados. No modificar resúmenes publicados.
-- **Cursor:** mantenerlo monotónico; messages_since cuenta cobertura pendiente, incluso antes del cursor. Esta decisión actualiza la semántica temporal del paso 2.
-
-### Decisiones tomadas (paso 5)
-- **REST:** validar canal/usuario, guardar solicitud y evento en una escritura y responder 202 con Location; polling por ID usa solo Mongo.
-- **Consultas:** listado paginado y latest completado; ambos validan el canal por API.
-
-### Decisiones tomadas (paso 6)
-- **Broker compartido:** summaries-rabbitmq para ambos servicios; messages conectado mediante RABBITMQ_URL, sin editar el repositorio del curso.
-- **Mensajería:** pika en un hilo propio; chat no durable, summaries durable, colas propias y ack manual tras persistir. Eventos inválidos van a una cola de errores.
-- **Entrega:** outbox/inbox de solicitudes dentro de summary, publicación confirmada y mensajes persistentes; RabbitMQ con volumen propio y hostname estable.
-
-### Decisiones confirmadas para los pasos siguientes
-- **LLM:** API HTTP configurable; mock solo para pruebas. URL/credencial reales se configurarán en el paso 7.
-- **Entrada al canal:** evento publicado por un Gateway, sin nueva ruta de entrada en este servicio. Contrato propuesto para implementar en el paso 9 en REFERENCIA.md.
-
-## Revisión de código (2026-10-19) — pendientes a considerar
-
-Resueltos:
-- Los secretos ya no pasan por un archivo versionado (ver decisión de variables de entorno).
-- **Upsert en lote:** `MongoRepository.upsert_messages` (`bulk_write` no ordenado, lotes de 1000, misma semántica idempotente/de conflicto que `upsert_message`, que ahora delega en él). `build_window` reconcilia con una escritura por lote en vez de 2–3 consultas por mensaje.
-- **Outbox por aviso:** `EventBroker.notify()` (un `threading.Event`) despierta la publicación; `SummaryService.request_summary` lo invoca al crear la solicitud (inyectado desde `app.state.broker`). Sin aviso, solo hay un sondeo de respaldo cada `OUTBOX_POLL_SECONDS` (default 5 s) y una publicación al (re)conectar; ya no se consulta Mongo cada 0,2 s. El worker del paso 7 debe reutilizar este patrón (aviso + respaldo).
-- `compose.test.yaml`: `mongodb` con `ulimits nofile 64000`; con el límite de 1024 de algunos hosts Linux, WiredTiger abortaba (EMFILE) a mitad de la suite. Suite: 228 pruebas aprobadas.
-
-Abiertos, por prioridad:
-- **Operación:** `messages` del núcleo solo publica con `RABBITMQ_URL=amqp://summaries-rabbitmq:5672` aplicado por override en ejecución (repetir si se recrea el contenedor). El paso 9 depende de un Gateway que aún no existe.
-- (Docker y documentación: resueltos en el paso 10.)
-
-## Decisiones para el paso 7 (LLM: Gemini)
-
-- **Proveedor:** Gemini mediante API key. La suscripción Gemini Plus (app de consumo) no incluye API key: se obtiene en Google AI Studio (tiene capa gratuita con límites de uso, y en esa capa Google puede usar los datos enviados para mejorar sus modelos; considerarlo al enviar mensajes del chat). Verificar nombre de modelo vigente y límites antes de fijarlos.
-- **Adaptador:** la API de Gemini no sigue el contrato `POST /generate` propuesto en REFERENCIA.md; `llm_client.py` debe adaptar mensajes + prompt al formato de Gemini (`generateContent`, key por cabecera) y devolver texto. `LLM_API_KEY` solo en `.env`.
-- **Límite del MVP:** ventana máxima de **7 días o 500 mensajes** (lo que ocurra primero). Con el contexto de Gemini no hace falta dividir en partes para el MVP (500 × 4000 caracteres máx. es el peor caso). Hay que definir y documentar qué pasa al exceder el límite (propuesta: tomar los 500 más recientes y registrar en el digest que hubo recorte; no truncar en silencio) y cómo interactúa con el checkpoint (los mensajes no resumidos no deben marcarse como cubiertos).
-
-### Implementado del paso 7 (worker + mock)
-- **Worker** con lease con dueño: reclamo atómico (pendiente o procesando vencido), renovación antes de cada paso, intentos contados (`WORKER_MAX_ATTEMPTS`=3), reutilización del digest persistido sin volver a llamar al LLM, y confirmación de cobertura recuperable (`_coverage_pending`). Despertado por aviso desde el consumidor de `summary.requested` y por sondeo de respaldo.
-- **Ventana vacía** → `fallida` con motivo, sin llamar al LLM. **Errores transitorios** → reintento hasta el máximo y luego `fallida` con "(tras N intentos)".
-- **Límites 7 días / 500 mensajes / 400000 caracteres** desde los más recientes. Desviación respecto a lo conversado: los mensajes omitidos **sí se marcan como cubiertos** en resúmenes incrementales (con la idea original, el umbral del paso 9 se dispararía indefinidamente); el recorte queda en `Digest.omitted_count`, en el snapshot y en una nota al final del resumen. Los resúmenes por `timeInterval` no afectan la cobertura.
-- `LLM_PROVIDER=mock` es el default (incluido en `.env.example`): con el compose normal las solicitudes se completan con un resumen **simulado**; con `LLM_PROVIDER=gemini` en `.env` se usa Gemini (sin proveedor de pago).
-- Pruebas: `tests/conftest.py` desactiva los límites de ventana por defecto (fechas fijas); `tests/test_worker.py` los restablece.
-
-### Gemini (paso 7, completado)
-- `GeminiProvider` verificado con la API real (una llamada): modelo principal `gemini-3.5-flash-lite`, respaldo `gemini-3.8-flash` (IDs confirmados con `GET /v1beta/models`). La key vive en `.env` local (ignorado por git; **nunca en `.env.example`**, que está versionado). Para usarlo: `.env` con `LLM_PROVIDER=gemini`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_FALLBACK_MODEL`.
-- Límites de cuota gratuita informados por el equipo: Flash-Lite 15 RPM / 250K TPM / 500 RPD; Flash 5 RPM / 250K TPM / 20 RPD. Por eso Flash-Lite es el principal. Las pruebas automáticas nunca llaman a la API real.
-- El prompt prohíbe convertir días relativos en fechas (una prueba inicial lo hizo) y pide responder sin introducción.
-- Las llamadas de prueba con datos reales envían los mensajes a Google; en la capa gratuita pueden usarse para mejorar sus modelos: usar datos ficticios.
-
-### Prueba de extremo a extremo (2026-10-19) — paso 7 verificado
-Chat base (`docker compose -p demo`, override `RABBITMQ_URL`) + summaries con Gemini real (`gemini-3.5-flash-lite`). Resultados:
-- POST → 202 con `Location`; polling `pendiente → procesando → completada` en ~2 s; contenido con decisiones, eventos y tareas con responsables correctos; `latest` y listado coherentes.
-- Canal inexistente → 404; usuario inexistente → 422; intervalo sin mensajes → `fallida` ("No hay mensajes en la ventana solicitada") sin llamar al LLM.
-- Incremental: el 2º resumen solo cubrió el mensaje nuevo (digest de 1 mensaje); el de `timeInterval` no tocó el checkpoint. Al final: 0 mensajes sin cobertura, 0 `_coverage_pending`, sin errores en logs.
-- El evento `chat.message.created` (publicado a mano en el exchange `chat`) llegó al historial local.
-
-**Bug del demo del curso (no de este servicio):** en `users`, `channels` y `messages`, `insert_one(dict)` agrega `_id` (ObjectId) al mismo dict que luego se devuelve/publica. Resultado: todos los `POST` de creación responden **500 aunque el dato queda guardado**, y `messages` falla en `json.dumps(event)` **antes de publicar**, así que con el demo tal cual **nunca se emite `chat.message.created`** (el ObjectId no es serializable). Existe igual en el repo remoto (`main`). Consecuencias: (1) para probar hay que tolerar el 500 y obtener los IDs desde los GET/listados (los usuarios no tienen listado: se leyeron de su Mongo solo para preparar la prueba); (2) la reconciliación por `GET .../messages` de `build_window` es imprescindible, no un respaldo menor; (3) para ejercitar el camino por eventos hay que publicar `chat.message.created` a mano en el exchange `chat` (no durable). No se modificaron archivos del curso; conviene avisar al profesor.
-- Al bajar el chat con `docker compose -p demo down` desaparece la red `microsvcs` (la crea ese proyecto); los volúmenes se conservan.
-
-### Paso 8 — eventos terminales (hecho)
-- **Evento atómico con el estado:** `_transition` escribe `_terminal_delivery` (evento, `published`, `attempts`, `last_error`) en la misma operación que pasa a `completada`/`fallida`; un worker con lease vencido no lo escribe y re-confirmar no lo duplica.
-- **Contrato:** `summary.generated` / `summary.failed` en el exchange `summaries`; `data` = `summary_id`, `channel_id`, `requested_by`, `messageState` (+ `error` en failed). Sin contenido del resumen (se consulta por GET). Detalle en `docs/REFERENCIA.md`.
-- **Publicación:** `EventBroker._flush_outbox` publica solicitudes y resultados (persistente, confirmada, `message_id` estable); el worker avisa con `on_result` → `broker.notify`. Los resultados van **sin `mandatory`** porque aún no hay consumidor; quien se suscriba declara su cola durable enlazada a `summary.generated`/`summary.failed`.
-- **Eventos durables:** se eliminaron `publish()` y la lista en memoria; `GET /api/v1/events?limit&offset` lee de Mongo (`MongoRepository.list_events`). `make_event` vive en `models.py` (se reexporta desde `events.py`).
-- **Diagnóstico:** cada intento de publicación cuenta en `attempts`; un fallo guarda `last_error`.
-
-### Preparado para acoplar un Gateway (sin implementarlo)
-El servicio ya cumple su lado del contrato; al Gateway le corresponde:
-1. **Recibir resultados:** declarar una cola durable propia enlazada al exchange `summaries` con `summary.generated`/`summary.failed`, deduplicar por tipo + `summary_id` y consultar el contenido por `GET /api/v1/summaries/{id}`. Para ponerse al día tras estar caído: `GET /api/v1/events`.
-2. **Avisar la entrada a un canal (paso 9):** publicar `chat.channel.entered` (`channel_id`, `user_id`, `entry_id`) en el exchange `gateway` (propuesta en REFERENCIA.md). Mientras no exista, el paso 9 se probará con un publicador de prueba, no con una ruta nueva en este servicio.
-
-### Paso 9 — resumen automático (hecho, sin Gateway real)
-- **Entrada:** consumidor de `chat.channel.entered` (exchange `gateway`, durable; cola propia `summaries_for_channel_entered_queue`) que solo **persiste** la entrada (`entries`, única por `entry_id`) y despierta al worker; la evaluación (llamadas al núcleo) la hace el worker, no el hilo de RabbitMQ. Eventos incoherentes → cola de errores.
-- **Umbral estricto** sobre mensajes sin cobertura **dentro de la ventana de 7 días** (`count_recent_pending`): más de `MESSAGE_THRESHOLD` (50 no, 51 sí). Resuelve el pendiente anterior: los mensajes más viejos no cuentan, así que ya no hay solicitudes repetidas ni resúmenes `fallida` por eso. Antes de contar se reconcilia por API (imprescindible por el bug del demo, que no emite eventos de mensajes).
-- **Exclusión/dedup:** índices únicos parciales en `summaries` (`_entry_id`, y `channel_id` mientras `_automatic_active`); la marca se libera en `completada`/`fallida`. Resultado por entrada en `entries.outcome` (`requested`, `below_threshold`, `no_recent_messages`, `already_active`, `invalid_reference`, `dependency_unavailable`, `error`).
-- La solicitud automática es una solicitud normal (outbox, `requested_by` = quien entró, `trigger: "automatic"` y `entry_id` en el evento).
-- **Prueba sin Gateway:** `python -m app.tools.publish_channel_entered CHANNEL_ID USER_ID [ENTRY_ID]`. Verificado con el chat real y Gemini: un evento repetido abrió una sola solicitud, se completó con decisiones/evento/tarea correctos, y una segunda entrada sin mensajes nuevos dio `no_recent_messages`.
-- **El Gateway no es necesario** para completar la tarea ni para probar el paso 9; solo sería el productor real de `chat.channel.entered`.
-
-### Paso 10 — integración, resiliencia y entrega (hecho)
-- **Resiliencia verificada con la pila real** (chat + summaries, proveedor `mock`): RabbitMQ caído/recreado, Mongo caído (503 sin caerse, recuperación sin reiniciar), reinicio del servicio con solicitudes pendientes y broker caído. Todas las solicitudes se completaron al volver la dependencia. Tabla en el README.
-- **Defecto corregido al probar:** el límite de 7 días se contaba desde el fin del intervalo; un intervalo con fin en el futuro lo corría y dejaba `fallida` a un resumen válido. Ahora la referencia es `min(fin del intervalo, momento de la solicitud)`.
-- **Docker de entrega:** imagen con usuario no root (uid 10001), `HEALTHCHECK` y sin `--reload`; el compose ya no monta el código. Desarrollo: `docker-compose.dev.yaml`.
-- **Errores:** handler para excepciones inesperadas (500 `{"detail":"Internal error"}` sin detalles; el diagnóstico va al log). Prueba que las respuestas públicas solo exponen los campos documentados y ningún `_interno`.
-- **Logs:** las caídas de broker/Mongo se registran en una línea por intento (antes, una traza completa por segundo).
-- **Limpieza:** se eliminaron las funciones heredadas del esqueleto en `core_client` y el espejo de eventos en memoria.
-- **Documentación:** el README es la guía única (Linux/macOS); `INSTRUCCIONES.md` es el recorrido en PowerShell; `docs/REFERENCIA.md` tiene los contratos.
-- **Pendiente:** mergear `feature/paso-7-worker-llm` a `main` (por indicación del equipo, no se mergea hasta que lo pidan) y avisar al profesor del bug del demo.
-
-### Prueba del paso 10 con Gemini real (2026-10-19, Flash-Lite con respaldo Flash; umbral 3, lease 15 s)
-- **Intervalo manual:** `pendiente → procesando → completada`; decisiones, tareas con responsable y eventos correctos. Una vez tardó 15 s (normalmente 1,5–2 s; no se reprodujo, probable pico del proveedor).
-- **Automático:** el mismo `chat.channel.entered` publicado dos veces → una sola solicitud (`entries.outcome = requested`), completada, `requested_by` presente.
-- **Caída a mitad de la llamada:** `docker kill` mientras el resumen estaba `procesando`; al reiniciar, el lease venció y otro intento lo completó (2 intentos, **1 digest**, **1** `summary.generated` publicado, 0 mensajes sin cobertura, sin exclusión activa).
-- **Observación:** `gemini-3.8-flash` (respaldo) respondió 503 en una llamada directa: el respaldo también puede estar saturado. Ahora cada intento a Gemini se registra (modelo, duración, motivo; `LOG_LEVEL`, default INFO).
-- Costo: unas 9 llamadas de la cuota diaria. Datos de prueba borrados (el demo quedó con `Marcel` y `proyecto-x`).
-
+- Pruebas (solo Docker, ~260, usan Mongo y RabbitMQ reales y simulan el núcleo y Gemini):
+  `docker compose -p summaries-tests -f compose.test.yaml up --build --abort-on-container-exit --exit-code-from tests --attach tests`, y luego `down -v`.
+- Si cambia un modelo de evento: `python -m app.tools.export_event_schemas` (una prueba falla si `docs/eventos/` se desincroniza).
+- Si cambia un contrato, el lenguaje ubicuo o la frontera de responsabilidad, actualizar este archivo y `docs/REFERENCIA.md`.
+- Rama estable `main`; el trabajo va en ramas `feature/<nombre>` con PR.

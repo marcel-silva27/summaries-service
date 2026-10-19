@@ -81,3 +81,20 @@ def test_public_json_does_not_expose_bson():
     assert result["messageState"] == "pendiente"
     assert result["created_at"].endswith("Z")
     assert "_id" not in result
+
+
+def test_structured_summary_validates_and_renders_every_section():
+    from app.models import StructuredSummary, SummaryEvent, SummaryTask
+    summary = StructuredSummary(
+        overview="Se acordó la entrega.", decisions=["Entregar el viernes"],
+        events=[SummaryEvent(description="Reunión", when="el lunes a las 9"), SummaryEvent(description="Demo")],
+        tasks=[SummaryTask(description="Hacer las pruebas", assignee="Beto"), SummaryTask(description="Revisar")])
+    assert summary.render() == "\n".join([
+        "Se acordó la entrega.", "", "**Decisiones tomadas:**", "- Entregar el viernes", "",
+        "**Eventos:**", "- Reunión (el lunes a las 9)", "- Demo", "",
+        "**Tareas asignadas:**", "- Hacer las pruebas — Responsable: Beto", "- Revisar"])
+    assert "- Ninguna." in StructuredSummary(overview="Solo charla.").render()
+    for bad in ({"overview": "  "}, {"overview": ""}, {"overview": "x", "decisions": [""]},
+                {"overview": "x", "tasks": [{"description": ""}]}, {"overview": "x", "extra": 1}):
+        with pytest.raises(ValueError):
+            StructuredSummary(**bad)

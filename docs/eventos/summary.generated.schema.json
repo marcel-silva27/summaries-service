@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "summary.generated",
+  "$defs": {
+    "SummaryGeneratedData": {
+      "additionalProperties": false,
+      "properties": {
+        "summary_id": {
+          "minLength": 1,
+          "title": "Summary Id",
+          "type": "string"
+        },
+        "channel_id": {
+          "minLength": 1,
+          "title": "Channel Id",
+          "type": "string"
+        },
+        "requested_by": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Quién lo pidió; sirve para saber a quién avisar.",
+          "title": "Requested By"
+        },
+        "messageState": {
+          "const": "completada",
+          "title": "Messagestate",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary_id",
+        "channel_id",
+        "requested_by",
+        "messageState"
+      ],
+      "title": "SummaryGeneratedData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Se publica al completarse un resumen. El contenido se consulta con `GET /api/v1/summaries/{id}`.",
+  "examples": [
+    {
+      "data": {
+        "channel_id": "84e015c1-ed09-470c-b584-6f6210ea219c",
+        "messageState": "completada",
+        "requested_by": null,
+        "summary_id": "08ac19f0-b81f-413c-be12-416d99f2672d"
+      },
+      "occurred_at": "2026-10-19T05:15:00.456000+00:00",
+      "subject_id": "08ac19f0-b81f-413c-be12-416d99f2672d",
+      "type": "summary.generated"
+    }
+  ],
+  "properties": {
+    "subject_id": {
+      "minLength": 1,
+      "title": "Subject Id",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "type": {
+      "const": "summary.generated",
+      "title": "Type",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/SummaryGeneratedData"
+    }
+  },
+  "required": [
+    "subject_id",
+    "occurred_at",
+    "type",
+    "data"
+  ],
+  "type": "object"
+}

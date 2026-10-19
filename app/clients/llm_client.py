@@ -11,16 +11,37 @@ from typing import Callable, Protocol
 
 import httpx
 
+from pydantic import ValidationError
+
 from .. import config
+from ..models import StructuredSummary, SummaryEvent, SummaryTask
 
 logger = logging.getLogger(__name__)
 
 PROMPT = (
-    "Resume la conversación en español. Prioriza las decisiones tomadas, los eventos y las "
-    "tareas asignadas con sus responsables. Usa solo los mensajes proporcionados y no inventes "
+    "Resume la conversación en español y devuelve los campos pedidos: un resumen general breve, "
+    "las decisiones tomadas, los eventos mencionados (con cuándo, si se dijo) y las tareas asignadas "
+    "(con su responsable, si se indicó). Usa solo los mensajes proporcionados y no inventes "
     "información: no conviertas días relativos (\"el viernes\") en fechas ni deduzcas datos que no "
-    "aparezcan. Si no hay decisiones o tareas, dilo. Responde solo con el resumen, sin introducción."
+    "aparezcan. Si no hay decisiones, eventos o tareas, deja esa lista vacía."
 )
+
+# Esquema de salida para Gemini (subconjunto de OpenAPI). Un test comprueba que no se desalinee
+# de StructuredSummary.
+RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "overview": {"type": "STRING"},
+        "decisions": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "events": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+            "description": {"type": "STRING"}, "when": {"type": "STRING", "nullable": True}},
+            "required": ["description"]}},
+        "tasks": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+            "description": {"type": "STRING"}, "assignee": {"type": "STRING", "nullable": True}},
+            "required": ["description"]}},
+    },
+    "required": ["overview", "decisions", "events", "tasks"],
+}
 
 
 class LLMError(Exception):
@@ -42,7 +63,7 @@ class LLMRequest:
 
 
 class LLMProvider(Protocol):
-    def generate(self, request: LLMRequest) -> str: ...
+    def generate(self, request: LLMRequest) -> StructuredSummary: ...
 
 
 class MockProvider:
@@ -51,7 +72,7 @@ class MockProvider:
     `[mock:fail]` → error definitivo; `[mock:retry]` → error transitorio.
     """
 
-    def generate(self, request: LLMRequest) -> str:
+    def generate(self, request: LLMRequest) -> StructuredSummary:
         text = " ".join(message["content"] for message in request.messages)
         if "[mock:fail]" in text:
             raise LLMError("El proveedor simulado rechazó la solicitud")
@@ -59,9 +80,17 @@ class MockProvider:
             raise LLMError("El proveedor simulado no está disponible", retryable=True)
         authors = sorted({message["author_name"] for message in request.messages})
         first, last = request.messages[0], request.messages[-1]
-        return (f"[Resumen simulado] {len(request.messages)} mensajes de {', '.join(authors)} "
-                f"entre {first['created_at']} y {last['created_at']}. "
-                f"Último mensaje: {last['content'][:120]}")
+
+        def pick(*words: str) -> list[dict]:
+            return [m for m in request.messages if any(word in m["content"].lower() for word in words)]
+
+        return StructuredSummary(
+            overview=(f"[Resumen simulado] {len(request.messages)} mensajes de {', '.join(authors)} "
+                      f"entre {first['created_at']} y {last['created_at']}."),
+            decisions=[m["content"][:200] for m in pick("decid", "acord")],
+            events=[SummaryEvent(description=m["content"][:200]) for m in pick("reunión", "reunion", "entrega")],
+            tasks=[SummaryTask(description=m["content"][:200], assignee=m["author_name"])
+                   for m in pick("me encargo", "se encarga")])
 
 
 class GeminiProvider:
@@ -89,7 +118,7 @@ class GeminiProvider:
                                   headers={"x-goog-api-key": api_key.strip(),
                                            "Content-Type": "application/json"})
 
-    def generate(self, request: LLMRequest) -> str:
+    def generate(self, request: LLMRequest) -> StructuredSummary:
         last: LLMError | None = None
         for model in self.models:
             started = time.monotonic()
@@ -107,7 +136,7 @@ class GeminiProvider:
             return text
         raise last
 
-    def _call(self, model: str, request: LLMRequest) -> str:
+    def _call(self, model: str, request: LLMRequest) -> StructuredSummary:
         for attempt in (1, 2):
             try:
                 response = self._post(model, request)
@@ -117,7 +146,7 @@ class GeminiProvider:
                     self._sleep(error.wait)
                     continue
                 raise
-            return self._text(response)
+            return self._parse(self._text(response))
         raise AssertionError("unreachable")
 
     def _post(self, model: str, request: LLMRequest) -> dict:
@@ -125,7 +154,8 @@ class GeminiProvider:
                                for m in request.messages)
         body = {"systemInstruction": {"parts": [{"text": request.prompt}]},
                 "contents": [{"role": "user", "parts": [{"text": transcript}]}],
-                "generationConfig": {"temperature": 0.2}}
+                "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json",
+                                     "responseSchema": RESPONSE_SCHEMA}}
         try:
             response = self._http.post(f"{self._base_url}/models/{model}:generateContent", json=body)
         except httpx.TimeoutException as exc:
@@ -161,6 +191,14 @@ class GeminiProvider:
         if status in (401, 403):
             return LLMError("Credencial del proveedor rechazada: revisa LLM_API_KEY")
         return LLMError(f"El proveedor rechazó la solicitud (HTTP {status}, {model}): {message}")
+
+    @staticmethod
+    def _parse(text: str) -> StructuredSummary:
+        try:
+            return StructuredSummary.model_validate_json(text)
+        except ValidationError as exc:
+            # Con un esquema forzado es raro; si ocurre, otro intento (u otro modelo) suele bastar.
+            raise LLMError("La respuesta del proveedor no cumple el esquema del resumen", retryable=True) from exc
 
     @staticmethod
     def _text(data: dict) -> str:

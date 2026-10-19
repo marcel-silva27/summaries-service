@@ -309,13 +309,14 @@ class MongoRepository:
             self.get_summary(summary_id)
             raise PersistenceConflict("A persisted digest is required to complete a summary")
         return self._transition(summary_id, [MessageState.procesando], MessageState.completada,
-                                owner=owner, content=digest.content, error=None)
+                                owner=owner, content=digest.content, error=None,
+                                structured=digest.structured.model_dump() if digest.structured else None)
 
     def fail_summary(self, summary_id: str, error: str, owner: str | None = None) -> Summary:
         if not error or not error.strip():
             raise ValueError("A failure needs a non-empty error")
         return self._transition(summary_id, [MessageState.pendiente, MessageState.procesando],
-                                MessageState.fallida, owner=owner, error=error, content=None)
+                                MessageState.fallida, owner=owner, error=error, content=None, structured=None)
 
     def _transition(self, summary_id: str, expected: list[MessageState], target: MessageState,
                     *, owner: str | None = None, **values) -> Summary:
@@ -336,7 +337,8 @@ class MongoRepository:
             return _decode(Summary, document)
         current = self.get_summary(summary_id)
         if target in (MessageState.completada, MessageState.fallida):
-            if current.messageState == target and all(getattr(current, key) == val for key, val in values.items()):
+            snapshot = current.model_dump(mode="python")
+            if current.messageState == target and all(snapshot[key] == val for key, val in values.items()):
                 return current
         raise SummaryStateConflict(f"Cannot move summary from {current.messageState.value} to {target.value}")
 

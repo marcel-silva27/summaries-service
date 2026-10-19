@@ -4,7 +4,8 @@ import json
 import httpx
 import pytest
 
-from app.clients.llm_client import GeminiProvider, LLMError, LLMRequest, PROMPT
+from app.clients.llm_client import GeminiProvider, LLMError, LLMRequest, PROMPT, RESPONSE_SCHEMA
+from app.models import StructuredSummary
 
 KEY = "secret-key-123"
 REQUEST = LLMRequest("s1", "c1", [
@@ -14,9 +15,17 @@ REQUEST = LLMRequest("s1", "c1", [
      "created_at": "2026-10-18T10:05:00+00:00"}])
 
 
-def ok(text="Resumen"):
+def payload(overview="Resumen", **fields):
+    return json.dumps({"overview": overview, "decisions": [], "events": [], "tasks": []} | fields)
+
+
+def ok(overview="Resumen", **fields):
     return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {"parts": [
-        {"text": "pensando", "thought": True}, {"text": text, "thoughtSignature": "x"}]}}]})
+        {"text": "pensando", "thought": True}, {"text": payload(overview, **fields), "thoughtSignature": "x"}]}}]})
+
+
+def text_response(text):
+    return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": text}]}}]})
 
 
 def quota(delay=None):
@@ -49,13 +58,18 @@ def provider(server, *, fallback="backup", sleeps=None, **values):
 
 
 def test_request_format_and_response_parsing_ignore_thought_parts():
-    server = Server(ok("Decisión: entregar el viernes."))
-    assert provider(server).generate(REQUEST) == "Decisión: entregar el viernes."
+    server = Server(ok("Plan de entrega", decisions=["Entregar el viernes"],
+                       tasks=[{"description": "Hacer las pruebas", "assignee": "Beto"}]))
+    result = provider(server).generate(REQUEST)
+    assert result == StructuredSummary(overview="Plan de entrega", decisions=["Entregar el viernes"],
+                                       tasks=[{"description": "Hacer las pruebas", "assignee": "Beto"}])
     sent = server.requests[0]
     assert sent.url == "https://api.test/v1beta/models/main:generateContent"
     assert sent.headers["x-goog-api-key"] == KEY and KEY not in str(sent.url)
     body = json.loads(sent.content)
     assert body["systemInstruction"]["parts"][0]["text"] == PROMPT
+    config = body["generationConfig"]  # Salida estructurada: el LLM solo rellena campos.
+    assert config["responseMimeType"] == "application/json" and config["responseSchema"] == RESPONSE_SCHEMA
     transcript = body["contents"][0]["parts"][0]["text"]
     assert "[2026-10-18T10:00:00+00:00] Ana: Decidimos entregar el viernes" in transcript
     assert "Beto: Yo hago las pruebas" in transcript
@@ -63,16 +77,16 @@ def test_request_format_and_response_parsing_ignore_thought_parts():
 
 def test_short_quota_wait_is_retried_once_on_the_same_model():
     server, sleeps = Server(quota("3.5s"), ok()), []
-    assert provider(server, sleeps=sleeps).generate(REQUEST) == "Resumen"
+    assert provider(server, sleeps=sleeps).generate(REQUEST).overview == "Resumen"
     assert server.models == ["main", "main"] and sleeps == [3.5]
 
 
 def test_long_or_unknown_quota_wait_goes_straight_to_the_fallback_model():
     server, sleeps = Server(quota("45s"), ok("del respaldo")), []
-    assert provider(server, sleeps=sleeps).generate(REQUEST) == "del respaldo"
+    assert provider(server, sleeps=sleeps).generate(REQUEST).overview == "del respaldo"
     assert server.models == ["main", "backup"] and sleeps == []
     server = Server(quota(), ok("del respaldo"))
-    assert provider(server).generate(REQUEST) == "del respaldo"
+    assert provider(server).generate(REQUEST).overview == "del respaldo"
 
 
 def test_exhausted_quota_on_every_model_is_a_retryable_error_without_secrets():
@@ -86,7 +100,7 @@ def test_exhausted_quota_on_every_model_is_a_retryable_error_without_secrets():
 @pytest.mark.parametrize("failure", [httpx.Response(503), httpx.ReadTimeout("slow"), httpx.ConnectError("down")])
 def test_server_errors_timeouts_and_network_failures_use_the_fallback(failure):
     server = Server(failure, ok("respaldo"))
-    assert provider(server).generate(REQUEST) == "respaldo"
+    assert provider(server).generate(REQUEST).overview == "respaldo"
 
 
 def test_without_a_fallback_model_a_transient_error_is_surfaced_as_retryable():
@@ -129,3 +143,27 @@ def test_each_attempt_is_logged_with_model_and_duration(caplog):
     assert any("Gemini main failed" in r.message and "retryable" in r.message for r in caplog.records)
     assert any("Gemini backup answered in" in r.message for r in caplog.records)
     assert KEY not in caplog.text
+
+
+@pytest.mark.parametrize("bad", ["no es json", "{}", '{"overview": "   ", "decisions": [], "events": [], "tasks": []}',
+                                '{"overview": "x", "decisions": "no es lista", "events": [], "tasks": []}',
+                                '{"overview": "x", "decisions": [], "events": [], "tasks": [], "extra": 1}'])
+def test_a_response_that_breaks_the_schema_is_retried_on_the_fallback_model(bad):
+    server = Server(text_response(bad), ok("válido"))
+    assert provider(server).generate(REQUEST).overview == "válido"
+    assert server.models == ["main", "backup"]
+    with pytest.raises(LLMError, match="esquema") as error:
+        provider(Server(text_response(bad)), fallback="").generate(REQUEST)
+    assert error.value.retryable
+
+
+def test_the_response_schema_sent_to_gemini_matches_the_pydantic_model():
+    def names(model):
+        return set(model.model_fields)
+
+    from app.models import SummaryEvent, SummaryTask
+    properties = RESPONSE_SCHEMA["properties"]
+    assert set(properties) == names(StructuredSummary)
+    assert set(RESPONSE_SCHEMA["required"]) == names(StructuredSummary)
+    assert set(properties["events"]["items"]["properties"]) == names(SummaryEvent)
+    assert set(properties["tasks"]["items"]["properties"]) == names(SummaryTask)

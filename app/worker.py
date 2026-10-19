@@ -18,7 +18,7 @@ from .errors import (
     ChannelNotFound, DependencyFailed, DependencyUnavailable, PersistenceConflict,
     SummaryStateConflict, UserNotFound,
 )
-from .models import Digest, Summary
+from .models import Digest, StructuredSummary, Summary
 from .repository import Claim, MongoRepository
 from .services import MessageWindow, SummaryService
 
@@ -182,16 +182,17 @@ class SummaryWorker:
                        "author_name": self._author_name(message.author_id), "content": message.content,
                        "created_at": message.created_at.isoformat()} for message in window.messages])
         self._require_lease(summary)
-        content = self.provider.generate(request)
-        if not isinstance(content, str) or not content.strip():
-            raise LLMError("El proveedor devolvió un resumen vacío")
+        structured = self.provider.generate(request)
+        if not isinstance(structured, StructuredSummary):
+            raise LLMError("El proveedor devolvió una respuesta inválida")
+        content = structured.render()  # El texto lo arma el código a partir de los campos validados.
         if window.omitted:
             content += OMITTED_NOTE.format(count=window.omitted)
         first, last = window.messages[0], window.messages[-1]
         self._require_lease(summary)
         self.repository.save_digest(Digest(
             summary_id=summary.id, channel_id=summary.channel_id, timeInterval=window.time_interval,
-            content=content, message_count=len(window.messages), first_message_id=first.id,
+            content=content, structured=structured, message_count=len(window.messages), first_message_id=first.id,
             last_message_id=last.id, last_message_at=last.created_at, omitted_count=window.omitted))
 
     def _require_lease(self, summary: Summary) -> None:

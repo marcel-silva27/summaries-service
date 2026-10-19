@@ -136,7 +136,7 @@ curl.exe -i "$base/api/v1/channels/$canalId/summaries/latest"
 | Listado del canal | 200, lista con las solicitudes guardadas |
 | latest | 404 mientras no haya un resumen completado; después, 200 con el último |
 
-Repite el GET hasta que `messageState` sea `completada` o `fallida` (con `error`). Si el canal no tiene mensajes dentro de la ventana, queda `fallida` con *No hay mensajes en la ventana solicitada*. El listado usa limit de 1 a 1000 y offset desde 0.
+Repite el GET hasta que `messageState` sea `completada` o `fallida` (con `error`). Un resumen completado trae `content` (texto) y `structured` (decisiones, eventos y tareas con su responsable, en campos). Si el canal no tiene mensajes dentro de la ventana, queda `fallida` con *No hay mensajes en la ventana solicitada*. El listado usa limit de 1 a 1000 y offset desde 0.
 
 ### 3.4. Solicitar un intervalo
 
@@ -237,4 +237,4 @@ Mongo conserva summaries-data y RabbitMQ summaries-rabbitmq-data. Vuelve a inici
 | Los `POST` de users/channels/messages del demo devuelven 500 | Es un bug del demo del curso (el dato sí se guarda); obtén los IDs con los GET. Ver README |
 | El código de pruebas es distinto de 0 | Revisar la salida de pytest; no tomar el resultado del comando de limpieza como resultado de las pruebas |
 
-Guía principal: [README.md](./README.md). Decisiones: [CLAUDE.md](./CLAUDE.md). Conceptos y contratos: [REFERENCIA.md](./docs/REFERENCIA.md).
+Guía principal: [README.md](./README.md). Contexto: [CLAUDE.md](./CLAUDE.md). Contratos: [REFERENCIA.md](./docs/REFERENCIA.md). Esquemas de eventos: [docs/eventos](./docs/eventos/).

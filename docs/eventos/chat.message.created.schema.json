@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "chat.message.created",
+  "$defs": {
+    "LocalMessage": {
+      "additionalProperties": false,
+      "description": "Proyección local del contrato público de messages; no es su fuente de verdad.",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "channel_id": {
+          "minLength": 1,
+          "title": "Channel Id",
+          "type": "string"
+        },
+        "author_id": {
+          "minLength": 1,
+          "title": "Author Id",
+          "type": "string"
+        },
+        "content": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "channel_id",
+        "author_id",
+        "content",
+        "created_at"
+      ],
+      "title": "LocalMessage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Lo publica el servicio `messages` del chat (exchange `chat`). Se consume para el historial local.",
+  "examples": [
+    {
+      "data": {
+        "author_id": "b64bb09f-7517-49c8-b701-58a5b8e297f5",
+        "channel_id": "84e015c1-ed09-470c-b584-6f6210ea219c",
+        "content": "Decidimos entregar el viernes",
+        "created_at": "2026-10-19T05:14:50+00:00",
+        "id": "22f56d29-1466-4a8f-ad43-56d1cae6011b"
+      },
+      "occurred_at": "2026-10-19T05:14:50.000000+00:00",
+      "subject_id": "22f56d29-1466-4a8f-ad43-56d1cae6011b",
+      "type": "chat.message.created"
+    }
+  ],
+  "properties": {
+    "subject_id": {
+      "minLength": 1,
+      "title": "Subject Id",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "type": {
+      "const": "chat.message.created",
+      "title": "Type",
+      "type": "string"
+    },
+    "data": {
+      "$ref": "#/$defs/LocalMessage"
+    }
+  },
+  "required": [
+    "subject_id",
+    "occurred_at",
+    "type",
+    "data"
+  ],
+  "type": "object"
+}

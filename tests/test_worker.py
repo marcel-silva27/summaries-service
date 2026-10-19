@@ -14,7 +14,7 @@ from app.clients.core_client import CoreClient
 from app.clients.llm_client import LLMError, LLMRequest, MockProvider, build_provider
 from app.errors import SummaryStateConflict
 from app.events import EventBroker, make_event
-from app.models import LocalMessage, MessageState, SummaryRequest, TimeInterval, utc_now
+from app.models import LocalMessage, MessageState, StructuredSummary, SummaryRequest, TimeInterval, utc_now
 from app.services import limit_window
 from app.worker import SummaryWorker
 
@@ -148,9 +148,9 @@ def test_retryable_error_is_retried_then_succeeds(repository, core):
     seed(repository, core, [msg("m1")])
     summary = received(repository, core)
     provider = MagicMock()
-    provider.generate.side_effect = [LLMError("cuota agotada", retryable=True), "Resumen real"]
+    provider.generate.side_effect = [LLMError("cuota agotada", retryable=True), StructuredSummary(overview="Resumen real")]
     worker_for(repository, core, provider).drain()
-    assert repository.get_summary(summary.id).content == "Resumen real"
+    assert repository.get_summary(summary.id).content.startswith("Resumen real")
     assert provider.generate.call_count == 2
 
 
@@ -542,3 +542,35 @@ def test_failed_publication_is_recorded_and_the_next_process_delivers_it(reposit
     finally:
         runtime.stop()
         _cleanup(runtime)
+
+
+# --- Salida estructurada ---
+
+def test_the_structured_result_is_validated_stored_and_rendered_by_the_code(repository, core):
+    seed(repository, core, [
+        msg("m1", "Decidimos usar PostgreSQL", at=BASE),
+        msg("m2", "Yo me encargo de la base de datos", at=BASE + timedelta(minutes=1), author="u2"),
+        msg("m3", "Hay reunión el lunes", at=BASE + timedelta(minutes=2))])
+    summary = received(repository, core)
+    worker_for(repository, core).drain()
+    done = repository.get_summary(summary.id)
+    assert done.structured.decisions == ["Decidimos usar PostgreSQL"]
+    assert [(t.description, t.assignee) for t in done.structured.tasks] == [("Yo me encargo de la base de datos", "Beto")]
+    assert [e.description for e in done.structured.events] == ["Hay reunión el lunes"]
+    assert done.content == done.structured.render()  # El texto sale de los campos, no del LLM.
+    assert repository.get_digest_for_summary(summary.id).structured == done.structured
+    assert "- Responsable" not in done.content and "— Responsable: Beto" in done.content
+
+
+def test_failed_summaries_have_no_structured_result_and_a_provider_cannot_return_free_text(repository, core):
+    seed(repository, core, [msg("m1", "[mock:fail]")])
+    failed = received(repository, core)
+    worker_for(repository, core).drain()
+    assert repository.get_summary(failed.id).structured is None
+    seed(repository, core, [msg("m2", "ok", at=BASE + timedelta(minutes=1))])
+    other = received(repository, core)
+    provider = MagicMock()
+    provider.generate.return_value = "texto libre"  # Contrato antiguo: ya no se acepta.
+    worker_for(repository, core, provider).drain()
+    result = repository.get_summary(other.id)
+    assert result.messageState == MessageState.fallida and "inválida" in result.error

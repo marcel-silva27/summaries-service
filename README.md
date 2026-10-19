@@ -21,17 +21,17 @@ Cliente ◀──GET /summaries/{id} (polling)── Mongo ◀── digest + es
 chat.message.created (continuo) ──▶ historial local        chat.channel.entered (Gateway) ──▶ resumen automático
 ```
 
-Piezas: API REST (FastAPI), worker de generación con lease y reintentos, hilo de RabbitMQ (consumo e outbox), MongoDB propio (`summaries`, `digests`, `checkpoints`, `messages`, `entries`). Detalle de contratos y decisiones en [`docs/REFERENCIA.md`](./docs/REFERENCIA.md) y [`CLAUDE.md`](./CLAUDE.md).
+Piezas: API REST (FastAPI), worker de generación con lease y reintentos, hilo de RabbitMQ (consumo e outbox), MongoDB propio (`summaries`, `digests`, `checkpoints`, `messages`, `entries`). Detalle técnico en [`docs/REFERENCIA.md`](./docs/REFERENCIA.md); contexto y decisiones en [`CLAUDE.md`](./CLAUDE.md); qué se verificó, en [`docs/VERIFICACION.md`](./docs/VERIFICACION.md).
 
 ## Estado y alcance
 
-Los 10 pasos están implementados y probados: API con polling, persistencia, cliente del núcleo, ventanas de mensajes, RabbitMQ (outbox/inbox), worker, proveedores de LLM, eventos de resultado, resumen automático y resiliencia.
+El servicio está completo y probado: API REST con polling, eventos por cada transacción, worker con recuperación de fallas, resumen automático, esquemas de eventos y documentación OpenAPI.
 
 Conviene saber antes de usarlo:
 
 - **Por defecto el LLM es `mock`**: devuelve un resumen **simulado**. Para usar Gemini real, ver [Configurar Gemini](#configurar-gemini).
 - **No hay Gateway.** El curso no lo entrega. El servicio ya consume `chat.channel.entered` y publica `summary.generated`/`summary.failed`; mientras no exista, la entrada se prueba con una herramienta (ver [Resumen automático](#resumen-automático)).
-- **El demo del curso tiene un bug**: sus `POST` de creación responden 500 aunque guardan el dato, y `messages` **nunca publica `chat.message.created`** (falla al serializar el `_id` de Mongo). Por eso el servicio reconcilia el historial con `GET /channels/{id}/messages` en cada ventana. Detalle en `CLAUDE.md`.
+- **El demo del curso tiene un bug**: sus `POST` de creación responden 500 aunque guardan el dato, y `messages` **nunca publica `chat.message.created`** (falla al serializar el `_id` de Mongo). Por eso el servicio reconcilia el historial con `GET /channels/{id}/messages` en cada ventana. Detalle en [`docs/REFERENCIA.md`](./docs/REFERENCIA.md).
 - No hay autenticación (el chat base tampoco la tiene).
 
 ## Requisitos
@@ -97,7 +97,7 @@ curl -i -X POST http://localhost:8004/api/v1/channels/CHANNEL_ID/summaries \
 curl http://localhost:8004/api/v1/summaries/SUMMARY_ID
 ```
 
-`messageState`: `pendiente` → `procesando` → `completada` | `fallida` (con `error` legible). Errores: `{"detail": "..."}` con 404 (canal/resumen), 422 (usuario inexistente o datos inválidos; los de FastAPI traen una lista en `detail`), 409, 502/503 (núcleo o almacenamiento) y 500 genérico sin detalles internos.
+`messageState`: `pendiente` → `procesando` → `completada` | `fallida` (con `error` legible). Un resumen completado trae `content` (texto) y `structured` (los mismos datos en campos: `overview`, `decisions`, `events[{description, when}]`, `tasks[{description, assignee}]`). Errores: `{"detail": "..."}` con 404 (canal/resumen), 422 (usuario inexistente o datos inválidos; los de FastAPI traen una lista en `detail`), 409, 502/503 (núcleo o almacenamiento) y 500 genérico sin detalles internos.
 
 **Ventana enviada al LLM:** como máximo 7 días hacia atrás desde el fin de la ventana, 500 mensajes y 400 000 caracteres, siempre desde los más recientes. Lo omitido se anota al final del resumen y queda registrado en el digest; los mensajes omitidos de un resumen incremental se dan por cubiertos.
 
@@ -118,7 +118,7 @@ docker compose exec summaries python -m app.tools.publish_channel_entered CHANNE
 | `summary.generated` / `summary.failed` | Publica (exchange `summaries`) | Se guarda junto al estado final; sin el contenido del resumen |
 | `chat.channel.entered` | Consume (exchange `gateway`, durable) | Lo emite el Gateway |
 
-Formato del curso: `{type, subject_id, occurred_at, data}`; la routing key es el `type`. Entrega al menos una vez, con identidad estable por evento: un consumidor debe deduplicar por tipo + `summary_id`. Quien consuma los resultados declara su propia cola durable enlazada a `summary.generated`/`summary.failed`.
+Formato del curso: `{type, subject_id, occurred_at, data}`; la routing key es el `type`. **Esquemas JSON Schema** de cada evento en [`docs/eventos/`](./docs/eventos/), generados desde modelos Pydantic y verificados por las pruebas. Entrega al menos una vez, con identidad estable por evento: un consumidor debe deduplicar por tipo + `summary_id`. Quien consuma los resultados declara su propia cola durable enlazada a `summary.generated`/`summary.failed`.
 
 ## Variables de entorno
 
@@ -148,7 +148,7 @@ docker compose -p summaries-tests -f compose.test.yaml up --build --abort-on-con
 docker compose -p summaries-tests -f compose.test.yaml down -v
 ```
 
-**228 pruebas aprobadas.** Cubren API y errores, persistencia y concurrencia, ventanas (más de 1000 mensajes, tardíos, límites), outbox/inbox con RabbitMQ real, worker (lease, reintentos, recuperación), adaptador de Gemini, eventos de resultado, resumen automático y respuestas públicas.
+**259 pruebas aprobadas.** Cubren API y errores, persistencia y concurrencia, ventanas (más de 1000 mensajes, tardíos, límites), outbox/inbox con RabbitMQ real, worker (lease, reintentos, recuperación), adaptador de Gemini y salida estructurada, eventos de resultado y sus esquemas JSON, resumen automático, documentación OpenAPI (válida y con ejemplos) y respuestas públicas.
 
 ## Resiliencia verificada con la pila real
 
@@ -165,7 +165,10 @@ docker compose -p summaries-tests -f compose.test.yaml down -v
 
 ```text
 summaries-service/
-├── CLAUDE.md, README.md, INSTRUCCIONES.md, docs/REFERENCIA.md
+├── README.md                  # esta guía
+├── CLAUDE.md, AGENTS.md       # contexto del proyecto y reglas para agentes
+├── INSTRUCCIONES.md           # recorrido paso a paso en PowerShell
+├── docs/REFERENCIA.md         # contrato técnico; docs/VERIFICACION.md; docs/eventos/*.schema.json
 ├── Dockerfile                 # usuario no root, healthcheck, sin --reload
 ├── docker-compose.yaml        # servicio + Mongo + RabbitMQ (red externa microsvcs)
 ├── docker-compose.dev.yaml    # override de desarrollo (código montado, --reload)
@@ -173,19 +176,20 @@ summaries-service/
 ├── tests/
 └── app/
     ├── main.py                # lifespan, health, events
-    ├── config.py, models.py, errors.py
+    ├── config.py, models.py, errors.py, api_models.py
+    ├── event_schemas.py       # esquemas de los eventos del broker
     ├── repository.py          # PyMongo: summaries, digests, checkpoints, mensajes, entradas
     ├── services.py            # solicitudes, ventanas, entradas a canales
     ├── worker.py              # generación con lease, reintentos y recuperación
     ├── events.py              # RabbitMQ: consumo, outbox, topología
     ├── routes/summaries.py    # endpoints REST
     ├── clients/               # core_client (users/channels/messages), llm_client (mock, Gemini)
-    └── tools/publish_channel_entered.py
+    └── tools/                 # publish_channel_entered, export_event_schemas
 ```
 
 ## Flujo de trabajo
 
 - `main` es la rama estable; el trabajo va en ramas `feature/<nombre>` con PR contra `main`.
 - Antes de tocar un contrato con el núcleo, revisar su OpenAPI en `localhost:800{1,2,3}/docs`.
-- Si cambia un contrato, el lenguaje ubicuo o la frontera de responsabilidad, actualizar `CLAUDE.md`.
+- Si cambia un contrato, el lenguaje ubicuo o la frontera de responsabilidad, actualizar `CLAUDE.md` y `docs/REFERENCIA.md`; si cambia un evento, regenerar `docs/eventos/`.
 - El servicio nunca lee ni escribe las bases de `users`, `channels` ni `messages`.

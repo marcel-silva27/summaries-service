@@ -44,8 +44,10 @@ class MessageState(str, Enum):
 
 class TimeInterval(DomainModel):
     """Ventana UTC semiabierta: start <= created_at < end."""
-    start: UTCDateTime
-    end: UTCDateTime
+    start: UTCDateTime = Field(description="Inicio (incluido). ISO 8601 con zona horaria.",
+                               examples=["2026-10-19T09:00:00Z"])
+    end: UTCDateTime = Field(description="Fin (excluido). Debe ser posterior a `start`.",
+                             examples=["2026-10-19T18:00:00Z"])
 
     @model_validator(mode="after")
     def ordered(self) -> Self:
@@ -54,21 +56,81 @@ class TimeInterval(DomainModel):
         return self
 
 
+class SummaryEvent(DomainModel):
+    """Evento mencionado en la conversación (reunión, entrega, hito...)."""
+    description: NonEmptyText = Field(description="Qué ocurrirá u ocurrió.", examples=["Reunión con el profesor"])
+    when: str | None = Field(default=None, description="Cuándo, tal como se dijo en la conversación; sin inventar fechas.",
+                             examples=["el lunes a las 9:00"])
+
+
+class SummaryTask(DomainModel):
+    """Tarea asignada en la conversación."""
+    description: NonEmptyText = Field(description="Qué hay que hacer.", examples=["Escribir el informe final"])
+    assignee: str | None = Field(default=None, description="Responsable, si se indicó.", examples=["Sofía"])
+
+
+class StructuredSummary(DomainModel):
+    """Resumen estructurado: lo que devuelve el LLM (validado) y de lo que se deriva `content`."""
+    overview: NonEmptyText = Field(description="Resumen general en una o dos frases.")
+    decisions: list[NonEmptyText] = Field(default_factory=list, description="Decisiones tomadas.")
+    events: list[SummaryEvent] = Field(default_factory=list, description="Eventos mencionados.")
+    tasks: list[SummaryTask] = Field(default_factory=list, description="Tareas asignadas con su responsable.")
+
+    @field_validator("overview")
+    @classmethod
+    def overview_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("overview cannot be blank")
+        return value
+
+    def render(self) -> str:
+        """Texto legible del resumen; lo genera el código, no el LLM."""
+        def section(title: str, lines: list[str]) -> list[str]:
+            return ["", f"**{title}:**", *(lines or ["- Ninguna."])]
+        return "\n".join([
+            self.overview.strip(),
+            *section("Decisiones tomadas", [f"- {item}" for item in self.decisions]),
+            *section("Eventos", [f"- {item.description}" + (f" ({item.when})" if item.when else "")
+                                 for item in self.events]),
+            *section("Tareas asignadas", [f"- {item.description}"
+                                          + (f" — Responsable: {item.assignee}" if item.assignee else "")
+                                          for item in self.tasks]),
+        ])
+
+
 class SummaryRequest(DomainModel):
-    user_id: Identifier | None = None
-    timeInterval: TimeInterval | None = None
+    """Cuerpo opcional del POST. Vacío = resumir lo nuevo desde el último resumen del canal."""
+    user_id: Identifier | None = Field(default=None, description="Usuario que lo pide; si se indica, debe existir en `users`.",
+                                       examples=["b64bb09f-7517-49c8-b701-58a5b8e297f5"])
+    timeInterval: TimeInterval | None = Field(
+        default=None, description="Acota los mensajes a resumir. Un resumen por intervalo no avanza el cursor del canal.")
+
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_extra={"examples": [
+        {}, {"user_id": "b64bb09f-7517-49c8-b701-58a5b8e297f5"},
+        {"timeInterval": {"start": "2026-10-19T09:00:00Z", "end": "2026-10-19T18:00:00Z"}}]})
 
 
 class Summary(DomainModel):
-    id: Identifier = Field(default_factory=lambda: str(uuid4()))
-    channel_id: Identifier
-    requested_by: Identifier | None = None
-    messageState: MessageState = MessageState.pendiente
-    timeInterval: TimeInterval | None = None
-    content: NonEmptyText | None = None
-    error: NonEmptyText | None = None
-    created_at: UTCDateTime = Field(default_factory=utc_now)
-    updated_at: UTCDateTime = Field(default_factory=utc_now)
+    """Un resumen y su estado. Se consulta por polling hasta `completada` o `fallida`."""
+    id: Identifier = Field(default_factory=lambda: str(uuid4()), description="ID del resumen (uuid).")
+    channel_id: Identifier = Field(description="Canal resumido.")
+    requested_by: Identifier | None = Field(default=None, description="Usuario que lo pidió; `null` si no se indicó.")
+    messageState: MessageState = Field(default=MessageState.pendiente, description="Estado de la solicitud.")
+    timeInterval: TimeInterval | None = Field(default=None, description="Intervalo pedido; `null` = incremental.")
+    content: NonEmptyText | None = Field(default=None, description="Texto del resumen; solo si está `completada`.")
+    structured: StructuredSummary | None = Field(
+        default=None, description="Mismo resumen en campos (decisiones, eventos, tareas); solo si está completada.")
+    error: NonEmptyText | None = Field(default=None, description="Motivo legible del fallo; solo si está `fallida`.")
+    created_at: UTCDateTime = Field(default_factory=utc_now, description="Cuándo se pidió.")
+    updated_at: UTCDateTime = Field(default_factory=utc_now, description="Último cambio de estado.")
+
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_extra={"examples": [{
+        "id": "08ac19f0-b81f-413c-be12-416d99f2672d", "channel_id": "84e015c1-ed09-470c-b584-6f6210ea219c",
+        "requested_by": None, "messageState": "completada", "timeInterval": None,
+        "content": "Resumen general.\n\n**Decisiones tomadas:**\n- Entregar el viernes\n\n**Eventos:**\n- Ninguna.\n\n**Tareas asignadas:**\n- Hacer las pruebas — Responsable: Beto",
+        "structured": {"overview": "Resumen general.", "decisions": ["Entregar el viernes"], "events": [],
+                       "tasks": [{"description": "Hacer las pruebas", "assignee": "Beto"}]},
+        "error": None, "created_at": "2026-10-19T05:14:58.123Z", "updated_at": "2026-10-19T05:15:00.456Z"}]})
 
     @model_validator(mode="after")
     def consistent_state(self) -> Self:
@@ -82,12 +144,18 @@ class Summary(DomainModel):
                 raise ValueError("A failed summary needs an error and no content")
         elif self.content is not None or self.error is not None:
             raise ValueError("An unfinished summary cannot have content or error")
+        if self.messageState != MessageState.completada and self.structured is not None:
+            raise ValueError("Only a completed summary can have a structured result")
         return self
 
 
 class SummaryAccepted(DomainModel):
-    summary_id: Identifier
-    messageState: MessageState = MessageState.pendiente
+    """Respuesta 202: la solicitud quedó guardada; el resumen se genera en segundo plano."""
+    summary_id: Identifier = Field(description="Úsalo en `GET /api/v1/summaries/{summary_id}` hasta `completada` o `fallida`.")
+    messageState: MessageState = Field(default=MessageState.pendiente, description="Siempre `pendiente` al aceptar.")
+
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_extra={"examples": [
+        {"summary_id": "08ac19f0-b81f-413c-be12-416d99f2672d", "messageState": "pendiente"}]})
 
 
 class Digest(DomainModel):
@@ -101,6 +169,7 @@ class Digest(DomainModel):
     first_message_id: Identifier
     last_message_id: Identifier
     last_message_at: UTCDateTime
+    structured: StructuredSummary | None = None
     # Mensajes dejados fuera por los límites de ventana (7 días / 500 mensajes / tamaño).
     omitted_count: int = Field(default=0, ge=0)
     created_at: UTCDateTime = Field(default_factory=utc_now)
