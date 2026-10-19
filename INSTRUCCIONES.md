@@ -51,7 +51,7 @@ docker compose up -d --build --wait --wait-timeout 120
 docker compose ps
 ```
 
-Mongo y RabbitMQ deben aparecer saludables; summaries debe estar iniciado. Compose ya carga `.env.example`: para la configuración local de esta guía no necesitas crear otro archivo ni proporcionar una API key de LLM.
+Mongo y RabbitMQ deben aparecer saludables; summaries debe estar iniciado. Compose carga `.env.example` (valores por defecto) y, si existe, `.env` encima. Para esta guía no necesitas crear `.env` ni una API key de LLM.
 
 ### 2.4. Conectar messages al mismo broker
 

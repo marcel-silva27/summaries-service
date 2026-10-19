@@ -87,20 +87,35 @@ Propuesta completa (con diagramas de arquitectura y flujo end2end): https://clau
 
 ## Estado de implementación
 
-### Completado (pasos 1–6)
-Servicio en `localhost:8004`: persistencia, cliente HTTP, ventanas, REST/polling y RabbitMQ. POST devuelve 202 y la solicitud llega a la bandeja durable del worker. Permanece pendiente hasta implementar el LLM del paso 7.
+### Progreso por paso
+| Paso | Descripción | Estado |
+| --- | --- | --- |
+| 1 | Esqueleto FastAPI, Dockerfile, compose (Mongo + RabbitMQ), `/health` | Hecho |
+| 2 | Modelos y repositorio Mongo (summaries, digests, checkpoints, messages) | Hecho |
+| 3 | Cliente del núcleo con errores explícitos | Hecho |
+| 4 | `POST /channels/{id}/summaries` (202 + Location) y ventanas de mensajes | Hecho |
+| 5 | Los 3 `GET` restantes (por id, listado paginado, latest) | Hecho |
+| 6 | RabbitMQ: consumidor de `chat.message.created`, bandeja durable de `summary.requested` | Hecho |
+| 7 | Worker + cliente LLM HTTP + mock de pruebas | **Pendiente (siguiente)** |
+| 8 | Publicar `summary.generated` / `summary.failed` con entrega fiable | Pendiente |
+| 9 | Resumen automático por entrada al canal (Gateway) y `messageThreshold` | Pendiente |
+| 10 | End2end, pulido, README y entrega pública | Pendiente |
 
+El POST devuelve 202 y la solicitud llega a la bandeja durable del worker; permanece `pendiente` hasta implementar el paso 7. Servicio en `localhost:8004` (`/docs`, `/health`); requiere el chat base corriendo (crea la red `microsvcs`, aquí `external: true`).
+
+Archivos:
 - `app/main.py`: lifespan de Mongo/HTTP y del hilo RabbitMQ, health y events.
 - `app/models.py`, `app/repository.py`: summaries, digests, checkpoints e historial local.
 - `app/clients/core_client.py`: get_channel, get_user y list_messages con validación y errores explícitos. `llm_client.py` sigue como stub.
 - `app/services.py`: solicitudes y ventanas reconciliadas, con snapshot inmutable y cobertura de tardíos.
 - `app/events.py`: publicador/consumidores, confirmaciones, reconexión y cola de errores.
-- `tests/`: 159 pruebas aprobadas con Mongo/RabbitMQ reales. Ejecución en README; conceptos y contratos en [docs/REFERENCIA.md](./docs/REFERENCIA.md).
+- `tests/`: pruebas con Mongo/RabbitMQ reales (`compose.test.yaml`, `Dockerfile.test`; ejecución en README e `INSTRUCCIONES.md`, que está en PowerShell). Conceptos y contratos en [docs/REFERENCIA.md](./docs/REFERENCIA.md), que también contiene los hallazgos del código base del curso.
+- El trabajo de los pasos 2–6 entró por la rama `avance-paso-2-3-4-5-6` (PR #1 a `main`). Repo: https://github.com/marcel-silva27/summaries-service
 
 ### Decisiones tomadas
 - **RabbitMQ propio** en el compose (`summaries-rabbitmq`, `rabbitmq:4-management-alpine`) sin publicar puertos al host, porque 5672/15672 suelen estar ocupados por otros proyectos locales. Ojo: el `messages` del núcleo solo publica si se le define `RABBITMQ_URL` apuntando a un broker que este servicio pueda alcanzar; hay que usar el **mismo broker** (decidir si el núcleo apunta a `summaries-rabbitmq` o este servicio al del núcleo).
 - **`pymongo` síncrono** (como el curso), sin `motor`; `httpx` para clientes HTTP; `pika` para el broker.
-- **Variables de entorno:** `docker-compose.yaml` carga `.env.example` (`env_file`) y sobrescribe `MONGODB_URL` y `BROKER_URL`. `LLM_API_URL` apunta a un `llm-mock` inexistente hasta que se defina el LLM real.
+- **Variables de entorno y secretos:** `docker-compose.yaml` carga `.env.example` (valores por defecto versionados, sin secretos) y luego `.env` (opcional, ignorado por git) que lo sobrescribe. Las credenciales reales (`LLM_API_KEY`) van **solo** en `.env`, nunca en `.env.example`. Compose fija `MONGODB_URL`; `BROKER_URL` admite override. `LLM_API_URL` apunta a un `llm-mock` inexistente hasta el paso 7.
 - Puerto host `8004` → contenedor `8000`.
 
 ### Decisiones tomadas (paso 2)
@@ -134,7 +149,14 @@ Servicio en `localhost:8004`: persistencia, cliente HTTP, ventanas, REST/polling
 - **LLM:** API HTTP configurable; mock solo para pruebas. URL/credencial reales se configurarán en el paso 7.
 - **Entrada al canal:** evento publicado por un Gateway, sin nueva ruta de entrada en este servicio. Contrato propuesto para implementar en el paso 9 en REFERENCIA.md.
 
-### Siguiente
-Paso 7: worker sobre la bandeja recibida, cliente LLM HTTP y mock de pruebas. Después: 8 eventos de resultado fiables; 9 Gateway/entrada automática; 10 end2end y entrega pública. Funcionamiento esperado y criterios detallados en [README.md](./README.md).
+## Revisión de código (2026-10-19) — pendientes a considerar
 
-Las cuatro decisiones consultadas quedaron resueltas por el usuario. Restan datos de despliegue del LLM real y la implementación/conexión del Gateway.
+Resuelto: los secretos ya no pasan por un archivo versionado (ver decisión de variables de entorno).
+
+Abiertos, por prioridad:
+- **Paso 7:** definir recuperación de resúmenes atascados en `procesando` (worker caído; existe el índice `pending_work`) y qué hacer con una ventana vacía (`Digest` exige `message_count >= 1`: completar con texto fijo o marcar `fallida`).
+- **Rendimiento:** `build_window` descarga todo el canal y hace upsert mensaje a mensaje (2–3 consultas cada uno); pasar a `bulk_write`. `_flush_requests` consulta Mongo cada 0,2 s aunque no haya pendientes.
+- **Eventos:** la lista `events` en memoria no tiene límite y se pierde al reiniciar; `publish()` es heredado del esqueleto y no publica al broker.
+- **Operación:** `messages` del núcleo solo publica con `RABBITMQ_URL=amqp://summaries-rabbitmq:5672` aplicado por override en ejecución (repetir si se recrea el contenedor). El paso 9 depende de un Gateway que aún no existe.
+- **Docker:** la imagen corre como root y con `--reload`, y el volumen `./app` es de desarrollo; separar configuración de entrega.
+- **Documentación:** hay tres guías de ejecución (README, `INSTRUCCIONES.md`, `docs/REFERENCIA.md`); dejar una como autoridad. Verificar el conteo de pruebas citado en el README.

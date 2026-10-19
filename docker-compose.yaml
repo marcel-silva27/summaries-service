@@ -6,7 +6,12 @@ services:
       - "8004:8000"
     volumes:
       - ./app:/app/app
-    env_file: .env.example
+    # .env.example son los valores por defecto (versionados, sin secretos);
+    # .env (ignorado por git) los sobrescribe, p. ej. con LLM_API_KEY.
+    env_file:
+      - .env.example
+      - path: .env
+        required: false
     environment:
       MONGODB_URL: mongodb://summaries-mongodb:27017
       BROKER_URL: ${BROKER_URL:-amqp://summaries-rabbitmq:5672}

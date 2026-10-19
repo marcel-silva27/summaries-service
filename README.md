@@ -114,7 +114,7 @@ No se editan los archivos de `microservicios/`; solo se configura RABBITMQ_URL e
 | `LLM_TIMEOUT_SECONDS` | Timeout LLM; por defecto `60` s |
 | `MESSAGE_THRESHOLD` | Umbral automático; por defecto `50`; el disparo será con **más de** ese valor |
 
-Compose carga `.env.example` y fija MONGODB_URL al contenedor propio. BROKER_URL admite override desde el entorno o `.env` mediante interpolación; su default es summaries-rabbitmq. El resto del `.env` no reemplaza automáticamente el env_file. LLM_API_URL aún apunta a llm-mock, que se implementará en el paso 7; no versionar credenciales reales.
+Compose carga `.env.example` (valores por defecto versionados) y después `.env` si existe, que lo sobrescribe: crea `.env` (ignorado por git) para secretos como `LLM_API_KEY`. MONGODB_URL se fija siempre al contenedor propio; BROKER_URL admite override desde el entorno o `.env`, con default summaries-rabbitmq. LLM_API_URL aún apunta a llm-mock, que se implementará en el paso 7; no versionar credenciales reales.
 
 ## Uso de la API
 
