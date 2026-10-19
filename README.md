@@ -135,6 +135,7 @@ Formato del curso: `{type, subject_id, occurred_at, data}`; la routing key es el
 | `LLM_API_KEY`, `LLM_MODEL`, `LLM_FALLBACK_MODEL` | — | Gemini (la key **solo en `.env`**) |
 | `LLM_API_URL`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_MAX_WAIT_SECONDS` | API de Google, `60`, `10` | Endpoint, timeout y espera máxima del reintento ante 429 |
 | `LLM_MAX_DAYS`, `LLM_MAX_MESSAGES`, `LLM_MAX_INPUT_CHARS` | `7`, `500`, `400000` | Límites de la ventana |
+| `LOG_LEVEL` | `INFO` | Nivel de logs; cada intento a Gemini registra modelo y duración |
 | `WORKER_POLL_SECONDS`, `WORKER_RETRY_SECONDS`, `WORKER_LEASE_SECONDS`, `WORKER_MAX_ATTEMPTS` | `5`, `5`, `120`, `3` | Worker; el lease debe superar `LLM_TIMEOUT_SECONDS` |
 | `MESSAGE_THRESHOLD` | `50` | El disparo automático es con **más de** este valor |
 
@@ -147,7 +148,7 @@ docker compose -p summaries-tests -f compose.test.yaml up --build --abort-on-con
 docker compose -p summaries-tests -f compose.test.yaml down -v
 ```
 
-**227 pruebas aprobadas.** Cubren API y errores, persistencia y concurrencia, ventanas (más de 1000 mensajes, tardíos, límites), outbox/inbox con RabbitMQ real, worker (lease, reintentos, recuperación), adaptador de Gemini, eventos de resultado, resumen automático y respuestas públicas.
+**228 pruebas aprobadas.** Cubren API y errores, persistencia y concurrencia, ventanas (más de 1000 mensajes, tardíos, límites), outbox/inbox con RabbitMQ real, worker (lease, reintentos, recuperación), adaptador de Gemini, eventos de resultado, resumen automático y respuestas públicas.
 
 ## Resiliencia verificada con la pila real
 
@@ -157,7 +158,7 @@ docker compose -p summaries-tests -f compose.test.yaml down -v
 | RabbitMQ recreado (contenedor nuevo, mismo volumen) | La solicitud en vuelo se completa |
 | Mongo caído | `POST`/`GET` responden `503`, `/health` sigue ok; al volver, el servicio se recupera sin reiniciar |
 | Reinicio del servicio con solicitudes pendientes y broker caído | Al volver el broker se completan todas |
-| Worker caído a mitad de una generación | El lease vence, otro worker retoma; no se repite la llamada al LLM si el digest ya estaba guardado |
+| Servicio matado a mitad de la llamada a Gemini (probado con Gemini real) | El lease vence, otro intento la completa: un solo digest y un solo `summary.generated` |
 | Evento duplicado / inválido | Duplicado: un solo efecto. Inválido: cola de errores |
 
 ## Estructura

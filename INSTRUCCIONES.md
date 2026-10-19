@@ -15,7 +15,7 @@ docker compose -p summaries-tests -f compose.test.yaml down -v
 "Codigo de pruebas: $codigoPruebas (0 = correcto)"
 ```
 
-Resultado esperado: **227 passed**, código 0. Pueden aparecer avisos de deprecación de Starlette/Pika sin que fallen las pruebas. La limpieza con `-v` se aplica únicamente al proyecto aislado `summaries-tests`.
+Resultado esperado: **228 passed**, código 0. Pueden aparecer avisos de deprecación de Starlette/Pika sin que fallen las pruebas. La limpieza con `-v` se aplica únicamente al proyecto aislado `summaries-tests`.
 
 La suite comprueba API, persistencia, errores, concurrencia, ventanas de más de 1000 mensajes, tardíos, publicación/recepción RabbitMQ, replays y cola de errores. El LLM y el núcleo se simulan: estas pruebas no usan cuota de Gemini.
 

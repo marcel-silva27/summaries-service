@@ -101,7 +101,7 @@ Propuesta completa (con diagramas de arquitectura y flujo end2end): https://clau
 | 9 | Resumen automático por entrada al canal (Gateway) y `messageThreshold` | Hecho (lado summaries; sin Gateway real) |
 | 10 | End2end, pulido, README y entrega pública | Hecho (falta el merge a `main`) |
 
-El POST devuelve 202 y la solicitud llega a la bandeja durable del worker; permanece `pendiente` hasta implementar el paso 7. Servicio en `localhost:8004` (`/docs`, `/health`); requiere el chat base corriendo (crea la red `microsvcs`, aquí `external: true`).
+El POST devuelve 202 y el worker la completa (con `mock` o Gemini). Servicio en `localhost:8004` (`/docs`, `/health`); requiere el chat base corriendo (crea la red `microsvcs`, aquí `external: true`).
 
 Archivos:
 - `app/main.py`: lifespan de Mongo/HTTP y del hilo RabbitMQ, health y events.
@@ -116,7 +116,7 @@ Archivos:
 ### Decisiones tomadas
 - **RabbitMQ propio** en el compose (`summaries-rabbitmq`, `rabbitmq:4-management-alpine`) sin publicar puertos al host, porque 5672/15672 suelen estar ocupados por otros proyectos locales. Ojo: el `messages` del núcleo solo publica si se le define `RABBITMQ_URL` apuntando a un broker que este servicio pueda alcanzar; hay que usar el **mismo broker** (decidir si el núcleo apunta a `summaries-rabbitmq` o este servicio al del núcleo).
 - **`pymongo` síncrono** (como el curso), sin `motor`; `httpx` para clientes HTTP; `pika` para el broker.
-- **Variables de entorno y secretos:** `docker-compose.yaml` carga `.env.example` (valores por defecto versionados, sin secretos) y luego `.env` (opcional, ignorado por git) que lo sobrescribe. Las credenciales reales (`LLM_API_KEY`) van **solo** en `.env`, nunca en `.env.example`. Compose fija `MONGODB_URL`; `BROKER_URL` admite override. `LLM_API_URL` apunta a un `llm-mock` inexistente hasta el paso 7.
+- **Variables de entorno y secretos:** `docker-compose.yaml` carga `.env.example` (valores por defecto versionados, sin secretos) y luego `.env` (opcional, ignorado por git) que lo sobrescribe. Las credenciales reales (`LLM_API_KEY`) van **solo** en `.env`, nunca en `.env.example`. Compose fija `MONGODB_URL`; `BROKER_URL` admite override.
 - Puerto host `8004` → contenedor `8000`.
 
 ### Decisiones tomadas (paso 2)
@@ -156,12 +156,11 @@ Resueltos:
 - Los secretos ya no pasan por un archivo versionado (ver decisión de variables de entorno).
 - **Upsert en lote:** `MongoRepository.upsert_messages` (`bulk_write` no ordenado, lotes de 1000, misma semántica idempotente/de conflicto que `upsert_message`, que ahora delega en él). `build_window` reconcilia con una escritura por lote en vez de 2–3 consultas por mensaje.
 - **Outbox por aviso:** `EventBroker.notify()` (un `threading.Event`) despierta la publicación; `SummaryService.request_summary` lo invoca al crear la solicitud (inyectado desde `app.state.broker`). Sin aviso, solo hay un sondeo de respaldo cada `OUTBOX_POLL_SECONDS` (default 5 s) y una publicación al (re)conectar; ya no se consulta Mongo cada 0,2 s. El worker del paso 7 debe reutilizar este patrón (aviso + respaldo).
-- `compose.test.yaml`: `mongodb` con `ulimits nofile 64000`; con el límite de 1024 de algunos hosts Linux, WiredTiger abortaba (EMFILE) a mitad de la suite. Suite: 227 pruebas aprobadas.
+- `compose.test.yaml`: `mongodb` con `ulimits nofile 64000`; con el límite de 1024 de algunos hosts Linux, WiredTiger abortaba (EMFILE) a mitad de la suite. Suite: 228 pruebas aprobadas.
 
 Abiertos, por prioridad:
 - **Operación:** `messages` del núcleo solo publica con `RABBITMQ_URL=amqp://summaries-rabbitmq:5672` aplicado por override en ejecución (repetir si se recrea el contenedor). El paso 9 depende de un Gateway que aún no existe.
-- **Docker:** la imagen corre como root y con `--reload`, y el volumen `./app` es de desarrollo; separar configuración de entrega.
-- **Documentación:** hay tres guías de ejecución (README, `INSTRUCCIONES.md`, `docs/REFERENCIA.md`); dejar una como autoridad. Verificar el conteo de pruebas citado en el README.
+- (Docker y documentación: resueltos en el paso 10.)
 
 ## Decisiones para el paso 7 (LLM: Gemini)
 
@@ -192,8 +191,6 @@ Chat base (`docker compose -p demo`, override `RABBITMQ_URL`) + summaries con Ge
 **Bug del demo del curso (no de este servicio):** en `users`, `channels` y `messages`, `insert_one(dict)` agrega `_id` (ObjectId) al mismo dict que luego se devuelve/publica. Resultado: todos los `POST` de creación responden **500 aunque el dato queda guardado**, y `messages` falla en `json.dumps(event)` **antes de publicar**, así que con el demo tal cual **nunca se emite `chat.message.created`** (el ObjectId no es serializable). Existe igual en el repo remoto (`main`). Consecuencias: (1) para probar hay que tolerar el 500 y obtener los IDs desde los GET/listados (los usuarios no tienen listado: se leyeron de su Mongo solo para preparar la prueba); (2) la reconciliación por `GET .../messages` de `build_window` es imprescindible, no un respaldo menor; (3) para ejercitar el camino por eventos hay que publicar `chat.message.created` a mano en el exchange `chat` (no durable). No se modificaron archivos del curso; conviene avisar al profesor.
 - Al bajar el chat con `docker compose -p demo down` desaparece la red `microsvcs` (la crea ese proyecto); los volúmenes se conservan.
 
-### Pendiente tras el paso 7
-
 ### Paso 8 — eventos terminales (hecho)
 - **Evento atómico con el estado:** `_transition` escribe `_terminal_delivery` (evento, `published`, `attempts`, `last_error`) en la misma operación que pasa a `completada`/`fallida`; un worker con lease vencido no lo escribe y re-confirmar no lo duplica.
 - **Contrato:** `summary.generated` / `summary.failed` en el exchange `summaries`; `data` = `summary_id`, `channel_id`, `requested_by`, `messageState` (+ `error` en failed). Sin contenido del resumen (se consulta por GET). Detalle en `docs/REFERENCIA.md`.
@@ -223,3 +220,11 @@ El servicio ya cumple su lado del contrato; al Gateway le corresponde:
 - **Limpieza:** se eliminaron las funciones heredadas del esqueleto en `core_client` y el espejo de eventos en memoria.
 - **Documentación:** el README es la guía única (Linux/macOS); `INSTRUCCIONES.md` es el recorrido en PowerShell; `docs/REFERENCIA.md` tiene los contratos.
 - **Pendiente:** mergear `feature/paso-7-worker-llm` a `main` (por indicación del equipo, no se mergea hasta que lo pidan) y avisar al profesor del bug del demo.
+
+### Prueba del paso 10 con Gemini real (2026-10-19, Flash-Lite con respaldo Flash; umbral 3, lease 15 s)
+- **Intervalo manual:** `pendiente → procesando → completada`; decisiones, tareas con responsable y eventos correctos. Una vez tardó 15 s (normalmente 1,5–2 s; no se reprodujo, probable pico del proveedor).
+- **Automático:** el mismo `chat.channel.entered` publicado dos veces → una sola solicitud (`entries.outcome = requested`), completada, `requested_by` presente.
+- **Caída a mitad de la llamada:** `docker kill` mientras el resumen estaba `procesando`; al reiniciar, el lease venció y otro intento lo completó (2 intentos, **1 digest**, **1** `summary.generated` publicado, 0 mensajes sin cobertura, sin exclusión activa).
+- **Observación:** `gemini-3.8-flash` (respaldo) respondió 503 en una llamada directa: el respaldo también puede estar saturado. Ahora cada intento a Gemini se registra (modelo, duración, motivo; `LOG_LEVEL`, default INFO).
+- Costo: unas 9 llamadas de la cuota diaria. Datos de prueba borrados (el demo quedó con `Marcel` y `proyecto-x`).
+

@@ -4,6 +4,7 @@ import os
 MONGODB_URL = os.environ.get("MONGODB_URL", "mongodb://summaries-mongodb:27017")
 MONGODB_DATABASE = os.environ.get("MONGODB_DATABASE", "summaries")
 MONGODB_TIMEOUT_MS = int(os.environ.get("MONGODB_TIMEOUT_MS", "5000"))
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 BROKER_URL = os.environ.get("BROKER_URL", "amqp://summaries-rabbitmq:5672")
 BROKER_TIMEOUT_SECONDS = float(os.environ.get("BROKER_TIMEOUT_SECONDS", "2"))
 BROKER_RETRY_SECONDS = float(os.environ.get("BROKER_RETRY_SECONDS", "1"))

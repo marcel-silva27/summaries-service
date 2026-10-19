@@ -1,4 +1,5 @@
 """Servicio de Resúmenes: resúmenes de chat generados por LLM."""
+import logging
 from contextlib import asynccontextmanager
 
 from typing import Annotated
@@ -15,6 +16,9 @@ from .events import EventBroker
 from .routes import summaries
 from .repository import MongoRepository, RepositoryDependency
 from .worker import SummaryWorker
+
+
+logging.basicConfig(level=config.LOG_LEVEL, format="%(levelname)s:%(name)s:%(message)s")
 
 
 @asynccontextmanager

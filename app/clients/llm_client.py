@@ -3,6 +3,7 @@
 El resto del servicio solo conoce `LLMProvider`. `mock` sirve para desarrollo y pruebas;
 `gemini` usa la API REST de Google (`generateContent`) y nunca se invoca en pruebas automáticas.
 """
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from typing import Callable, Protocol
 import httpx
 
 from .. import config
+
+logger = logging.getLogger(__name__)
 
 PROMPT = (
     "Resume la conversación en español. Prioriza las decisiones tomadas, los eventos y las "
@@ -89,12 +92,19 @@ class GeminiProvider:
     def generate(self, request: LLMRequest) -> str:
         last: LLMError | None = None
         for model in self.models:
+            started = time.monotonic()
             try:
-                return self._call(model, request)
+                text = self._call(model, request)
             except LLMError as error:
+                # Una línea por intento: permite saber qué modelo respondió y cuánto tardó.
+                logger.warning("Gemini %s failed after %.1fs (%s): %s", model, time.monotonic() - started,
+                               "retryable" if error.retryable else "permanent", error.reason)
                 if not error.retryable:
                     raise
                 last = error
+                continue
+            logger.info("Gemini %s answered in %.1fs", model, time.monotonic() - started)
+            return text
         raise last
 
     def _call(self, model: str, request: LLMRequest) -> str:

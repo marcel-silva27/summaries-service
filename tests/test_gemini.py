@@ -121,3 +121,11 @@ def test_configuration_is_validated_when_the_provider_is_built():
         GeminiProvider(api_key=KEY, model=" ", base_url="https://x", timeout=1)
     same = GeminiProvider(api_key=KEY, model="m", fallback_model="m", base_url="https://x", timeout=1)
     assert same.models == ["m"]
+
+
+def test_each_attempt_is_logged_with_model_and_duration(caplog):
+    caplog.set_level("INFO", logger="app.clients.llm_client")
+    provider(Server(httpx.Response(503), ok("respaldo"))).generate(REQUEST)
+    assert any("Gemini main failed" in r.message and "retryable" in r.message for r in caplog.records)
+    assert any("Gemini backup answered in" in r.message for r in caplog.records)
+    assert KEY not in caplog.text
