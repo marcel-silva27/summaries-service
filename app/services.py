@@ -1,8 +1,8 @@
 """Ventanas del historial y orquestación de solicitudes; sin llamadas al LLM."""
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Callable
 
-from fastapi import Depends
+from fastapi import Depends, Request
 
 from .clients.core_client import CoreClient, CoreClientDependency
 from .events import make_event, record_event
@@ -19,9 +19,12 @@ class MessageWindow:
 
 
 class SummaryService:
-    def __init__(self, repository: MongoRepository, core: CoreClient):
+    def __init__(self, repository: MongoRepository, core: CoreClient,
+                 on_request_created: Callable[[], None] | None = None):
         self.repository = repository
         self.core = core
+        # Despierta la publicación de la outbox sin esperar al sondeo de respaldo.
+        self.on_request_created = on_request_created or (lambda: None)
 
     def request_summary(self, channel_id: str, request: SummaryRequest | None = None) -> Summary:
         self.core.get_channel(channel_id)
@@ -39,6 +42,7 @@ class SummaryService:
         summary = self.repository.create_summary(channel_id, request, event_factory=event_for)
         # El evento durable está en Mongo; esta lista es solo el espejo del curso.
         record_event(event_for(summary))
+        self.on_request_created()
         return summary
 
     def list_summaries(self, channel_id: str, *, limit: int = 100, offset: int = 0) -> list[Summary]:
@@ -58,8 +62,8 @@ class SummaryService:
             return self._window_from_snapshot(summary.channel_id, snapshot)
         self.core.get_channel(summary.channel_id)
         # messages no publica todos los eventos si su broker falla: reconciliar siempre por API.
-        for data in self.core.list_messages(summary.channel_id):
-            self.repository.upsert_message(LocalMessage.model_validate(data))
+        self.repository.upsert_messages(
+            [LocalMessage.model_validate(data) for data in self.core.list_messages(summary.channel_id)])
         interval = summary.timeInterval
         after = None
         messages = []
@@ -88,8 +92,10 @@ class SummaryService:
         return MessageWindow(messages, interval, self.repository.get_checkpoint(channel_id))
 
 
-def get_summary_service(repository: RepositoryDependency, core: CoreClientDependency) -> SummaryService:
-    return SummaryService(repository, core)
+def get_summary_service(request: Request, repository: RepositoryDependency,
+                        core: CoreClientDependency) -> SummaryService:
+    broker = getattr(request.app.state, "broker", None)
+    return SummaryService(repository, core, broker.notify if broker is not None else None)
 
 
 SummaryServiceDependency = Annotated[SummaryService, Depends(get_summary_service)]

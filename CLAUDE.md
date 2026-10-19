@@ -151,12 +151,21 @@ Archivos:
 
 ## Revisión de código (2026-10-19) — pendientes a considerar
 
-Resuelto: los secretos ya no pasan por un archivo versionado (ver decisión de variables de entorno).
+Resueltos:
+- Los secretos ya no pasan por un archivo versionado (ver decisión de variables de entorno).
+- **Upsert en lote:** `MongoRepository.upsert_messages` (`bulk_write` no ordenado, lotes de 1000, misma semántica idempotente/de conflicto que `upsert_message`, que ahora delega en él). `build_window` reconcilia con una escritura por lote en vez de 2–3 consultas por mensaje.
+- **Outbox por aviso:** `EventBroker.notify()` (un `threading.Event`) despierta la publicación; `SummaryService.request_summary` lo invoca al crear la solicitud (inyectado desde `app.state.broker`). Sin aviso, solo hay un sondeo de respaldo cada `OUTBOX_POLL_SECONDS` (default 5 s) y una publicación al (re)conectar; ya no se consulta Mongo cada 0,2 s. El worker del paso 7 debe reutilizar este patrón (aviso + respaldo).
+- `compose.test.yaml`: `mongodb` con `ulimits nofile 64000`; con el límite de 1024 de algunos hosts Linux, WiredTiger abortaba (EMFILE) a mitad de la suite. Suite: 166 pruebas aprobadas.
 
 Abiertos, por prioridad:
 - **Paso 7:** definir recuperación de resúmenes atascados en `procesando` (worker caído; existe el índice `pending_work`) y qué hacer con una ventana vacía (`Digest` exige `message_count >= 1`: completar con texto fijo o marcar `fallida`).
-- **Rendimiento:** `build_window` descarga todo el canal y hace upsert mensaje a mensaje (2–3 consultas cada uno); pasar a `bulk_write`. `_flush_requests` consulta Mongo cada 0,2 s aunque no haya pendientes.
 - **Eventos:** la lista `events` en memoria no tiene límite y se pierde al reiniciar; `publish()` es heredado del esqueleto y no publica al broker.
 - **Operación:** `messages` del núcleo solo publica con `RABBITMQ_URL=amqp://summaries-rabbitmq:5672` aplicado por override en ejecución (repetir si se recrea el contenedor). El paso 9 depende de un Gateway que aún no existe.
 - **Docker:** la imagen corre como root y con `--reload`, y el volumen `./app` es de desarrollo; separar configuración de entrega.
 - **Documentación:** hay tres guías de ejecución (README, `INSTRUCCIONES.md`, `docs/REFERENCIA.md`); dejar una como autoridad. Verificar el conteo de pruebas citado en el README.
+
+## Decisiones para el paso 7 (LLM: Gemini)
+
+- **Proveedor:** Gemini mediante API key. La suscripción Gemini Plus (app de consumo) no incluye API key: se obtiene en Google AI Studio (tiene capa gratuita con límites de uso, y en esa capa Google puede usar los datos enviados para mejorar sus modelos; considerarlo al enviar mensajes del chat). Verificar nombre de modelo vigente y límites antes de fijarlos.
+- **Adaptador:** la API de Gemini no sigue el contrato `POST /generate` propuesto en REFERENCIA.md; `llm_client.py` debe adaptar mensajes + prompt al formato de Gemini (`generateContent`, key por cabecera) y devolver texto. `LLM_API_KEY` solo en `.env`.
+- **Límite del MVP:** ventana máxima de **7 días o 500 mensajes** (lo que ocurra primero). Con el contexto de Gemini no hace falta dividir en partes para el MVP (500 × 4000 caracteres máx. es el peor caso). Hay que definir y documentar qué pasa al exceder el límite (propuesta: tomar los 500 más recientes y registrar en el digest que hubo recorte; no truncar en silencio) y cómo interactúa con el checkpoint (los mensajes no resumidos no deben marcarse como cubiertos).

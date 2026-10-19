@@ -107,6 +107,7 @@ No se editan los archivos de `microservicios/`; solo se configura RABBITMQ_URL e
 | `MESSAGES_URL` | Base URL del servicio `messages` del núcleo |
 | `LLM_API_URL` | Endpoint del proveedor de LLM |
 | `BROKER_URL` | Conexión al broker de eventos |
+| `OUTBOX_POLL_SECONDS` | Sondeo de respaldo de la outbox (default 5); la publicación normal ocurre por aviso |
 | `BROKER_TIMEOUT_SECONDS` | Timeout de conexión/bloqueo AMQP; por defecto `2` s |
 | `BROKER_RETRY_SECONDS` | Espera entre reconexiones o reintentos por Mongo caído; por defecto `1` s |
 | `CORE_TIMEOUT_SECONDS` | Timeout HTTP al núcleo; por defecto `2` s |
@@ -142,7 +143,7 @@ El primer comando retorna el resultado de pytest; el segundo limpia solo el stac
 
 Alternativa con Python **3.12**: instalar requirements-test.txt, definir TEST_MONGODB_URL y TEST_BROKER_URL para instancias aisladas y ejecutar `python -m pytest -q tests`. Las pruebas de infraestructura fallan explícitamente si faltan esas variables.
 
-Verificación actual: **159 pruebas aprobadas**. Incluyen REST → Mongo → RabbitMQ → bandeja recibida, publicación fallida/recuperación, mensajes inválidos, ack/requeue, replays, ventanas de más de 1000 mensajes y tardíos durante una generación. Los avisos de deprecación de Starlette/Pika no afectan el resultado.
+Verificación actual: **166 pruebas aprobadas**. Incluyen REST → Mongo → RabbitMQ → bandeja recibida, publicación fallida/recuperación, mensajes inválidos, ack/requeue, replays, ventanas de más de 1000 mensajes y tardíos durante una generación. Los avisos de deprecación de Starlette/Pika no afectan el resultado.
 
 También se verificó la persistencia al recrear Mongo/FastAPI, la conexión de messages al broker compartido y la conservación de una cola/mensaje persistentes al recrear RabbitMQ, con reconexión de consumidores. Historial vacío no valida existencia del canal: usar get_channel.
 

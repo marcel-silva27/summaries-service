@@ -21,6 +21,10 @@ services:
       retries: 30
   mongodb:
     image: mongo:7
+    # Cada prueba crea una base con varios índices; con el límite de 1024 descriptores
+    # (default en algunos hosts Linux) WiredTiger aborta con EMFILE.
+    ulimits:
+      nofile: {soft: 64000, hard: 64000}
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 2s

@@ -7,6 +7,8 @@ MONGODB_TIMEOUT_MS = int(os.environ.get("MONGODB_TIMEOUT_MS", "5000"))
 BROKER_URL = os.environ.get("BROKER_URL", "amqp://summaries-rabbitmq:5672")
 BROKER_TIMEOUT_SECONDS = float(os.environ.get("BROKER_TIMEOUT_SECONDS", "2"))
 BROKER_RETRY_SECONDS = float(os.environ.get("BROKER_RETRY_SECONDS", "1"))
+# Respaldo: la outbox se publica al ser notificada; este sondeo cubre caídas entre la escritura y el aviso.
+OUTBOX_POLL_SECONDS = float(os.environ.get("OUTBOX_POLL_SECONDS", "5"))
 
 USERS_URL = os.environ.get("USERS_URL", "http://users:8000")
 CHANNELS_URL = os.environ.get("CHANNELS_URL", "http://channels:8000")

@@ -327,6 +327,6 @@ entry_id identificará una entrada y se conservará al reintentar. El servicio v
 
 ## Verificación actual de pasos 4–6
 
-159 pruebas con MongoDB 7/RabbitMQ reales y HTTP del núcleo simulado. Se verifican persistencia conjunta solicitud/evento, REST/polling, ventanas completas y límites, snapshot inmutable, tardíos antes/durante generación, digest incompatible, publicación fallida, reanudación, reconexión, colas independientes, deadletters y efectos idempotentes. También se verificó que el contenedor real de messages alcanza el broker compartido y que las colas de solicitudes/historial tienen sus consumidores activos.
+166 pruebas con MongoDB 7/RabbitMQ reales y HTTP del núcleo simulado. Se verifican persistencia conjunta solicitud/evento, REST/polling, ventanas completas y límites, snapshot inmutable, tardíos antes/durante generación, digest incompatible, publicación fallida, reanudación, reconexión, colas independientes, deadletters y efectos idempotentes. También se verificó que el contenedor real de messages alcanza el broker compartido y que las colas de solicitudes/historial tienen sus consumidores activos.
 
 Comprobación de volumen en desarrollo: una cola temporal durable con un mensaje delivery_mode=2 sobrevivió a la recreación de RabbitMQ. Se releyó el cuerpo, se eliminó únicamente esa cola de prueba y ambos consumidores del servicio volvieron a estar activos. Los archivos del núcleo y los datos del chat no se modificaron; RABBITMQ_URL se aplicó en ejecución según la decisión del usuario.

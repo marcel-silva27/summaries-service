@@ -7,9 +7,9 @@ from typing import Annotated, Callable, TypeVar
 
 from bson.codec_options import CodecOptions
 from fastapi import Depends, Request
-from pymongo import ASCENDING, DESCENDING, ReturnDocument
+from pymongo import ASCENDING, DESCENDING, ReturnDocument, UpdateOne
 from pymongo.database import Database
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from .errors import PersistenceConflict, SummaryNotFound, SummaryStateConflict
 from .models import (
@@ -209,20 +209,47 @@ class MongoRepository:
 
     def upsert_message(self, message: LocalMessage) -> bool:
         """Insertar una vez por ID. Un replay no modifica el mensaje ni infla contadores."""
+        return self.upsert_messages([message]) == 1
+
+    def upsert_messages(self, messages: list[LocalMessage], *, batch_size: int = 1000) -> int:
+        """Insertar en lote con la semántica de upsert_message; devuelve cuántos eran nuevos.
+
+        Un ID repetido con otro contenido levanta PersistenceConflict y nunca sobrescribe.
+        """
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        unique: dict[str, LocalMessage] = {}
+        for message in messages:
+            if unique.setdefault(message.id, message) != message:
+                raise PersistenceConflict("A different message already exists for this ID")
+        items = list(unique.values())
+        inserted = 0
+        for offset in range(0, len(items), batch_size):
+            inserted += self._upsert_batch(items[offset:offset + batch_size])
+        return inserted
+
+    def _upsert_batch(self, batch: list[LocalMessage]) -> int:
+        channels = list({message.channel_id for message in batch})
+        covered_ids = {document["last_message_id"] for document in self.checkpoints.find(
+            {"channel_id": {"$in": channels}}, {"last_message_id": 1})}
+        operations = [UpdateOne({"id": message.id},
+                                {"$setOnInsert": _document(message) | {"_history": {"covered": message.id in covered_ids}}},
+                                upsert=True) for message in batch]
         try:
-            known_cursor = self.checkpoints.find_one(
-                {"channel_id": message.channel_id, "last_message_id": message.id}, {"_id": 1})
-            document = _document(message) | {"_history": {"covered": known_cursor is not None}}
-            result = self.messages.update_one(
-                {"id": message.id}, {"$setOnInsert": document}, upsert=True)
-        except DuplicateKeyError:
-            result = None
-        if result is not None and result.upserted_id is not None:
-            return True
-        existing = self.get_message(message.id)
-        if existing != message:
-            raise PersistenceConflict("A different message already exists for this ID")
-        return False
+            result = self.messages.bulk_write(operations, ordered=False)
+            new_positions = set(result.upserted_ids)
+        except BulkWriteError as exc:
+            # Una carrera por el índice único solo significa que otro proceso insertó ese ID.
+            if any(error["code"] != 11000 for error in exc.details["writeErrors"]):
+                raise
+            new_positions = {item["index"] for item in exc.details["upserted"]}
+        known = [message for position, message in enumerate(batch) if position not in new_positions]
+        if known:
+            existing = {document["id"]: _decode(LocalMessage, document)
+                        for document in self.messages.find({"id": {"$in": [message.id for message in known]}})}
+            if any(existing.get(message.id) != message for message in known):
+                raise PersistenceConflict("A different message already exists for this ID")
+        return len(new_positions)
 
     def get_message(self, message_id: str) -> LocalMessage | None:
         return _decode(LocalMessage, self.messages.find_one({"id": message_id}))

@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import time
 from threading import Barrier
 
 import pytest
@@ -590,3 +591,131 @@ def test_requested_event_cannot_create_or_change_a_request(api, repository, brok
     assert repository.summaries.count_documents({}) == 1
     assert repository.get_summary(summary_id).channel_id == "channel"
     assert repository.get_summary(summary_id).messageState == MessageState.pendiente
+
+
+# --- Upsert en lote y publicación de la outbox por aviso ---
+
+def test_bulk_upsert_inserts_once_is_idempotent_and_spans_batches(repository):
+    items = [message(f"m{index:04d}", at=NOW + timedelta(seconds=index)) for index in range(25)]
+    assert repository.upsert_messages(items, batch_size=10) == 25
+    assert repository.upsert_messages(items, batch_size=10) == 0
+    assert repository.upsert_messages(items + [message("new", at=NOW + timedelta(minutes=1))]) == 1
+    assert repository.count_messages("channel") == 26
+    assert repository.get_checkpoint("channel").messages_since == 26
+    assert repository.upsert_messages([]) == 0
+    with pytest.raises(ValueError):
+        repository.upsert_messages(items, batch_size=0)
+
+
+def test_bulk_upsert_conflicts_never_overwrite(repository):
+    original = message("m1")
+    repository.upsert_messages([original, message("m2")])
+    changed = LocalMessage(**(original.model_dump() | {"content": "changed"}))
+    with pytest.raises(PersistenceConflict):
+        repository.upsert_messages([message("m3"), changed])
+    with pytest.raises(PersistenceConflict):
+        repository.upsert_messages([original, changed])  # Mismo ID repetido en el lote.
+    with pytest.raises(PersistenceConflict):
+        repository.upsert_messages([message("m1", channel="other")])
+    assert repository.get_message("m1") == original
+
+
+def test_bulk_upsert_marks_checkpoint_message_as_covered_and_survives_races(repository):
+    summary = completed(repository, "m1")
+    repository.advance_checkpoint(summary.id)
+    items = [message("m1"), message("m2", at=NOW + timedelta(seconds=1))]
+    repository.upsert_messages(items)
+    assert repository.get_checkpoint("channel").messages_since == 1  # Solo m2 queda sin cobertura.
+    shared = [message(f"r{index}", at=NOW + timedelta(seconds=index)) for index in range(50)]
+    inserted = concurrent(lambda _: repository.upsert_messages(shared))
+    assert sum(inserted) == 50
+    assert repository.count_messages("channel") == 52
+
+
+def test_build_window_reconciles_with_one_bulk_write_not_one_per_message(repository):
+    from unittest.mock import MagicMock
+    from app.services import SummaryService
+
+    data = [message(f"m{index}", at=NOW + timedelta(seconds=index)).model_dump(mode="json") for index in range(30)]
+    core = MagicMock()
+    core.get_channel.return_value = {}
+    core.list_messages.return_value = data
+    summary = repository.create_summary("channel")
+    spy = MagicMock(wraps=repository.messages.bulk_write)
+    repository.messages.bulk_write = spy
+    window = SummaryService(repository, core).build_window(summary.id)
+    assert len(window.messages) == 30
+    assert spy.call_count == 1
+
+
+def test_request_notifies_broker_only_when_a_request_is_created(api, repository):
+    from unittest.mock import MagicMock
+    from app.services import SummaryService
+
+    notify = MagicMock()
+    core = api.app.state.core_client
+    service = SummaryService(repository, core, notify)
+    service.request_summary("channel")
+    notify.assert_called_once_with()
+    notify.reset_mock()
+    with pytest.raises(Exception):
+        service.request_summary("missing")
+    notify.assert_not_called()
+
+
+def test_outbox_is_published_on_notify_without_frequent_polling(repository, broker_url, monkeypatch):
+    from unittest.mock import MagicMock
+    from uuid import uuid4
+    import pika
+    from app import config
+    from app.events import EventBroker, make_event
+    from app.models import utc_now
+
+    monkeypatch.setattr(config, "OUTBOX_POLL_SECONDS", 3600)
+    runtime = EventBroker(repository, url=broker_url, queue_prefix=f"test_{uuid4().hex}")
+    spy = MagicMock(wraps=repository.pending_request_events)
+    repository.pending_request_events = spy
+    runtime.start()
+    try:
+        assert runtime.ready.wait(15)
+        _wait_for(lambda: spy.call_count >= 1)  # Publicación inicial al conectar.
+        summary = repository.create_summary(
+            "channel", event_factory=lambda item: make_event("summary.requested", item.id, {"channel_id": "channel"}))
+        calls = spy.call_count
+        time.sleep(1.5)
+        assert spy.call_count == calls  # Sin aviso ni sondeo: Mongo no se consulta.
+        assert repository.pending_request_events() != []
+        calls = spy.call_count
+        runtime.notify()
+        _wait_for(lambda: repository.summaries.find_one({"id": summary.id})["_request_delivery"]["published"])
+        assert spy.call_count == calls + 1
+    finally:
+        runtime.stop()
+        with pika.BlockingConnection(runtime.connection_parameters()) as connection:
+            channel = connection.channel()
+            for queue in (runtime.history_queue, runtime.requests_queue, runtime.errors_queue):
+                channel.queue_delete(queue=queue)
+            channel.exchange_delete(exchange=runtime.dead_exchange)
+
+
+def test_outbox_polling_fallback_recovers_a_missed_notification(repository, broker_url, monkeypatch):
+    from uuid import uuid4
+    import pika
+    from app import config
+    from app.events import EventBroker, make_event
+
+    monkeypatch.setattr(config, "OUTBOX_POLL_SECONDS", 0.3)
+    runtime = EventBroker(repository, url=broker_url, queue_prefix=f"test_{uuid4().hex}")
+    runtime.start()
+    try:
+        assert runtime.ready.wait(15)
+        summary = repository.create_summary(
+            "channel", event_factory=lambda item: make_event("summary.requested", item.id, {"channel_id": "channel"}))
+        _wait_for(lambda: repository.summaries.find_one({"id": summary.id})["_request_delivery"]["published"])
+    finally:
+        runtime.stop()
+        with pika.BlockingConnection(runtime.connection_parameters()) as connection:
+            channel = connection.channel()
+            for queue in (runtime.history_queue, runtime.requests_queue, runtime.errors_queue):
+                channel.queue_delete(queue=queue)
+            channel.exchange_delete(exchange=runtime.dead_exchange)
