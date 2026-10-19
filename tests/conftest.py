@@ -17,6 +17,12 @@ from app.routes.summaries import router
 
 
 @pytest.fixture(autouse=True)
+def mock_llm_provider(monkeypatch):
+    # El proveedor por defecto es Gemini (exige key); las pruebas usan el mock y nunca llaman a la API real.
+    monkeypatch.setattr(config, "LLM_PROVIDER", "mock")
+
+
+@pytest.fixture(autouse=True)
 def unbounded_llm_window(monkeypatch):
     # Los datos de prueba usan fechas fijas: sin esto, las pruebas caducarían con el reloj real.
     # tests/test_worker.py restablece los límites reales donde los verifica.

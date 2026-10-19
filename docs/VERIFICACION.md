@@ -28,7 +28,8 @@ Verificado con el demo de la Unidad 3 en ejecución y el override de `RABBITMQ_U
 | RabbitMQ recreado (contenedor nuevo, mismo volumen) | La solicitud en vuelo se completa |
 | Mongo caído | `POST` y `GET` responden `503`, `/health` sigue ok; al volver, el servicio se recupera sin reiniciar |
 | Servicio reiniciado con solicitudes pendientes y broker caído | Al volver el broker se completan todas |
-| Clon limpio del repositorio siguiendo el README (sin `.env`, proveedor `mock`) | Arranca, imagen no root saludable, API y `/docs` responden, el resumen se completa con `structured` |
+| Clon limpio del repositorio siguiendo el README | Arranca, imagen no root saludable, API y `/docs` responden y el resumen se completa con `structured` |
+| Sin `LLM_API_KEY` | El servicio se niega a arrancar con un mensaje que indica cómo configurarla |
 | Salida estructurada con Gemini real (desde el clon, con `.env`) | `completada` en ~2,5 s; `decisions`, `events` (con `when`) y `tasks` (con `assignee`) correctos; `content` armado por el código |
 | Resumen por intervalo con Gemini real | `pendiente → procesando → completada` con decisiones, tareas con responsable y eventos correctos |
 | Resumen automático con Gemini real | El mismo `chat.channel.entered` publicado dos veces abre **una** solicitud, que se completa |

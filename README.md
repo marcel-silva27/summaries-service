@@ -14,7 +14,7 @@ El `POST` **no espera al LLM**: responde `202` + `summary_id` y el cliente consu
 ```text
 Cliente ──POST /channels/{id}/summaries──▶ API ──(1 escritura en Mongo: solicitud + evento)──▶ 202 + summary_id
                                             │
-                      outbox ──▶ RabbitMQ: summary.requested ──▶ inbox ──▶ Worker ──▶ LLM (mock | Gemini)
+                      outbox ──▶ RabbitMQ: summary.requested ──▶ inbox ──▶ Worker ──▶ LLM (Gemini)
                                                                               │
 Cliente ◀──GET /summaries/{id} (polling)── Mongo ◀── digest + estado + checkpoint ┘
                                                                               └──▶ summary.generated | summary.failed
@@ -29,54 +29,67 @@ El servicio está completo y probado: API REST con polling, eventos por cada tra
 
 Conviene saber antes de usarlo:
 
-- **Por defecto el LLM es `mock`**: devuelve un resumen **simulado**. Para usar Gemini real, ver [Configurar Gemini](#configurar-gemini).
+- **Necesita una API key de Gemini** para generar resúmenes (ver [Requisitos](#requisitos)); sin ella el servicio no arranca. El proveedor `mock` es solo para pruebas automáticas.
 - **No hay Gateway.** El curso no lo entrega. El servicio ya consume `chat.channel.entered` y publica `summary.generated`/`summary.failed`; mientras no exista, la entrada se prueba con una herramienta (ver [Resumen automático](#resumen-automático)).
 - **El demo del curso tiene un bug**: sus `POST` de creación responden 500 aunque guardan el dato, y `messages` **nunca publica `chat.message.created`** (falla al serializar el `_id` de Mongo). Por eso el servicio reconcilia el historial con `GET /channels/{id}/messages` en cada ventana. Detalle en [`docs/REFERENCIA.md`](./docs/REFERENCIA.md).
 - No hay autenticación (el chat base tampoco la tiene).
 
 ## Requisitos
 
-Docker y Docker Compose. No hace falta Python en el equipo. El chat base debe estar corriendo, porque crea la red `microsvcs`.
+- **Docker y Docker Compose.** No hace falta Python en el equipo.
+- **Una API key de Gemini (obligatoria).** El servicio genera los resúmenes con Gemini; sin la key **no arranca** y lo dice con un mensaje claro. Se obtiene gratis en [Google AI Studio](https://aistudio.google.com/) (no la incluye la suscripción de la app de Gemini). Ver [Configurar Gemini](#configurar-gemini).
+- **El chat base del curso corriendo:** es la fuente de las conversaciones y crea la red `microsvcs`.
+
+## Configurar Gemini
+
+Crea un archivo `.env` en la raíz del repositorio (está en `.gitignore`):
+
+```env
+LLM_API_KEY=tu-key-de-google-ai-studio
+```
+
+El resto viene preconfigurado en `.env.example`: modelo principal `gemini-3.5-flash-lite` y de respaldo `gemini-3.8-flash` (cambiables con `LLM_MODEL` y `LLM_FALLBACK_MODEL`; los disponibles se listan con `GET https://generativelanguage.googleapis.com/v1beta/models`). Con el principal agotado (429) o con fallos del proveedor se usa el de respaldo; si ambos fallan, el resumen queda `fallida` con el motivo.
+
+- **La key no se sube a GitHub.** `.env` está ignorado por git y por Docker (no entra en la imagen), y `.env.example` solo trae valores por defecto. **Nunca escribas la key en `.env.example`**, que sí está versionado.
+- **Privacidad:** en la capa gratuita Google puede usar lo que se le envía para mejorar sus modelos. Usa conversaciones sin datos personales.
+- `LLM_PROVIDER=mock` existe **solo para las pruebas automáticas**: devuelve un resumen simulado y no debe usarse para evaluar el servicio.
+
+### Publicar o desplegar sin exponer la key
+
+La key se entrega al contenedor **en tiempo de ejecución**, nunca dentro del repositorio ni de la imagen:
+
+- **Máquina propia o servidor con Docker Compose:** un `.env` local con permisos restringidos (`chmod 600 .env`).
+- **CI/CD (p. ej. GitHub Actions):** guardarla como *secret* del repositorio e inyectarla como variable de entorno `LLM_API_KEY`.
+- **Kubernetes:** crear un `Secret` (`kubectl create secret generic gemini --from-literal=LLM_API_KEY=...`) y exponerlo al pod como variable de entorno.
+- Si la key se filtra, revócala y crea otra en Google AI Studio; no hace falta tocar el código.
 
 ## Cómo correrlo
 
-1. Chat base del curso (en una carpeta aparte, sin modificarlo):
+1. Crear el `.env` con la key (ver arriba).
+2. Chat base del curso (en una carpeta aparte, sin modificarlo):
 
    ```bash
    git clone https://github.com/rmasad/microservicios.git
    docker compose -p demo -f microservicios/03_Comunicación/demo/docker-compose.yaml up -d --build
    ```
 
-2. Este servicio (espera a que Mongo, RabbitMQ y la app estén saludables):
+3. Este servicio (espera a que Mongo, RabbitMQ y la app estén saludables):
 
    ```bash
    cd summaries-service
    docker compose up -d --build --wait
    ```
 
-3. Conectar `messages` al broker de este servicio (un override por stdin: no crea ni edita archivos del curso; repetir si se recrea `messages`):
+4. Conectar `messages` al broker de este servicio (un override por stdin: no crea ni edita archivos del curso; repetir si se recrea `messages`):
 
    ```bash
    printf 'services:\n  messages:\n    environment:\n      RABBITMQ_URL: amqp://summaries-rabbitmq:5672\n' \
      | docker compose -p demo -f microservicios/03_Comunicación/demo/docker-compose.yaml -f - up -d --no-deps messages
    ```
 
-4. Listo: API `http://localhost:8004`, OpenAPI `http://localhost:8004/docs`, salud `http://localhost:8004/health`.
+5. Listo: API `http://localhost:8004`, OpenAPI `http://localhost:8004/docs`, salud `http://localhost:8004/health`.
 
 Para apagar: `docker compose down` (conserva los volúmenes `summaries-data` y `summaries-rabbitmq-data`; con `-v` se borran). **Desarrollo** con código montado y recarga: `docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up --build`. Guía paso a paso en PowerShell: [`INSTRUCCIONES.md`](./INSTRUCCIONES.md).
-
-### Configurar Gemini
-
-Crea un `.env` (está en `.gitignore`; **nunca pongas la key en `.env.example`**, que está versionado):
-
-```env
-LLM_PROVIDER=gemini
-LLM_API_KEY=tu-key-de-google-ai-studio
-LLM_MODEL=gemini-3.5-flash-lite
-LLM_FALLBACK_MODEL=gemini-3.8-flash
-```
-
-La key se obtiene gratis en Google AI Studio (no la incluye la suscripción de la app de Gemini). Con el modelo principal agotado (429) o con fallos del proveedor, se usa el de respaldo; si ambos fallan, el resumen queda `fallida` con el motivo. En la capa gratuita Google puede usar lo que se le envía para mejorar sus modelos: usa conversaciones sin datos personales. Los IDs de modelo disponibles se listan con `GET https://generativelanguage.googleapis.com/v1beta/models`.
 
 ## API
 
@@ -131,8 +144,9 @@ Formato del curso: `{type, subject_id, occurred_at, data}`; la routing key es el
 | `BROKER_TIMEOUT_SECONDS`, `BROKER_RETRY_SECONDS` | `2`, `1` | Timeout y espera entre reconexiones |
 | `OUTBOX_POLL_SECONDS` | `5` | Respaldo del aviso inmediato de la outbox |
 | `USERS_URL`, `CHANNELS_URL`, `MESSAGES_URL`, `CORE_TIMEOUT_SECONDS` | `http://{users,channels,messages}:8000`, `2` | Núcleo del chat |
-| `LLM_PROVIDER` | `mock` | `mock` o `gemini` |
-| `LLM_API_KEY`, `LLM_MODEL`, `LLM_FALLBACK_MODEL` | — | Gemini (la key **solo en `.env`**) |
+| `LLM_PROVIDER` | `gemini` | `gemini` (el servicio exige la key); `mock` solo para pruebas |
+| `LLM_API_KEY` | — | **Obligatoria.** La key de Gemini, **solo en `.env`** |
+| `LLM_MODEL`, `LLM_FALLBACK_MODEL` | `gemini-3.5-flash-lite`, `gemini-3.8-flash` | Modelo principal y de respaldo |
 | `LLM_API_URL`, `LLM_TIMEOUT_SECONDS`, `LLM_RETRY_MAX_WAIT_SECONDS` | API de Google, `60`, `10` | Endpoint, timeout y espera máxima del reintento ante 429 |
 | `LLM_MAX_DAYS`, `LLM_MAX_MESSAGES`, `LLM_MAX_INPUT_CHARS` | `7`, `500`, `400000` | Límites de la ventana |
 | `LOG_LEVEL` | `INFO` | Nivel de logs; cada intento a Gemini registra modelo y duración |
@@ -183,7 +197,7 @@ summaries-service/
     ├── worker.py              # generación con lease, reintentos y recuperación
     ├── events.py              # RabbitMQ: consumo, outbox, topología
     ├── routes/summaries.py    # endpoints REST
-    ├── clients/               # core_client (users/channels/messages), llm_client (mock, Gemini)
+    ├── clients/               # core_client (users/channels/messages), llm_client (Gemini; mock para pruebas)
     └── tools/                 # publish_channel_entered, export_event_schemas
 ```
 

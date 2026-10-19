@@ -198,7 +198,7 @@ El evento terminal **no incluye el contenido** del resumen: se consulta con `GET
 
 **Proveedores** (`app/clients/llm_client.py`), detrás de `LLMProvider.generate(LLMRequest) -> StructuredSummary`:
 
-- `mock` (por defecto): resumen determinista y local. `[mock:fail]` en un mensaje simula un fallo definitivo y `[mock:retry]` uno transitorio.
+- `mock` (solo pruebas automáticas; el valor por defecto es `gemini`): resumen determinista y local. `[mock:fail]` en un mensaje simula un fallo definitivo y `[mock:retry]` uno transitorio.
 - `gemini`: `POST {LLM_API_URL}/models/{modelo}:generateContent` con la key en la cabecera `x-goog-api-key` (nunca en la URL ni en errores). El prompt va como `systemInstruction`, la transcripción como `[fecha] autor: contenido` y se pide **salida estructurada** (`responseMimeType: application/json` + `responseSchema`), validada con Pydantic; el texto del resumen lo arma el código. Ante 429 reintenta una vez si el proveedor pide esperar ≤ `LLM_RETRY_MAX_WAIT_SECONDS`; si persiste, o ante 5xx, timeout, error de red o una respuesta que no cumple el esquema, prueba `LLM_FALLBACK_MODEL` (las cuotas son por modelo). Credencial rechazada, petición inválida y respuesta bloqueada o truncada son definitivas. Cada intento se registra (modelo, duración, motivo). Un test comprueba que el esquema enviado coincida con el modelo Pydantic.
 
 El prompt prioriza decisiones, eventos y tareas con responsable, y prohíbe inventar datos o convertir días relativos en fechas. Las pruebas automáticas nunca llaman a la API real.

@@ -297,7 +297,7 @@ def test_mock_provider_is_deterministic_and_provider_selection_is_explicit():
                                       "content": "Hola", "created_at": "2026-10-18T10:00:00+00:00"}])
     assert MockProvider().generate(request) == MockProvider().generate(request)
     assert isinstance(build_provider("mock"), MockProvider)
-    with pytest.raises(ValueError, match="gemini"):
+    with pytest.raises(ValueError, match="LLM_API_KEY"):  # Sin key, Gemini no arranca: mensaje claro.
         build_provider("gemini")
     with pytest.raises(ValueError):
         build_provider("otro")

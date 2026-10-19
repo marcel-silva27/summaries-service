@@ -17,7 +17,7 @@ MESSAGES_URL = os.environ.get("MESSAGES_URL", "http://messages:8000")
 CORE_TIMEOUT_SECONDS = float(os.environ.get("CORE_TIMEOUT_SECONDS", "2"))
 
 # LLM: `mock` (desarrollo/pruebas) o `gemini` (se conecta al final del paso 7).
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "mock")
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "gemini")
 LLM_API_URL = os.environ.get("LLM_API_URL", "https://generativelanguage.googleapis.com/v1beta")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 LLM_MODEL = os.environ.get("LLM_MODEL", "")

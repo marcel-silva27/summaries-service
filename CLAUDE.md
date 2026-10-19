@@ -63,10 +63,10 @@ Piezas (`app/`): `routes/` (REST), `services.py` (solicitudes, ventanas, entrada
 - **Lease con dueño** para el worker; si se cae, otro retoma la solicitud sin repetir la llamada al LLM si el digest ya existe.
 - **Salida estructurada**: el LLM devuelve JSON validado con Pydantic (`StructuredSummary`); el texto `content` lo arma el código.
 - **Ventana al LLM**: 7 días, 500 mensajes y 400 000 caracteres, desde los más recientes; lo omitido se registra y, en incrementales, se da por cubierto.
-- **LLM**: `mock` por defecto; Gemini con modelo principal `gemini-3.5-flash-lite` y respaldo `gemini-3.8-flash` (cuota gratuita informada: 15 RPM/500 RPD y 5 RPM/20 RPD). Sin proveedor de pago.
+- **LLM**: Gemini es obligatorio (sin `LLM_API_KEY` el servicio no arranca); el proveedor `mock` es solo para pruebas automáticas. Modelo principal `gemini-3.5-flash-lite` y respaldo `gemini-3.8-flash` (cuota gratuita informada: 15 RPM/500 RPD y 5 RPM/20 RPD). Sin proveedor de pago.
 - **Un solo broker**: `summaries-rabbitmq`, compartido con `messages` mediante un *override* de `RABBITMQ_URL` (README).
 - **pymongo síncrono** (como el curso), `httpx`, `pika`; Python 3.12; puerto host 8004.
-- **Secretos**: `LLM_API_KEY` solo en `.env` (ignorado por git), **nunca** en `.env.example`, que está versionado.
+- **Secretos**: `LLM_API_KEY` solo en `.env` (ignorado por git y por Docker), **nunca** en `.env.example`, que está versionado.
 - **Docker**: imagen no root con healthcheck y sin `--reload`; desarrollo con `docker-compose.dev.yaml`.
 
 ## Hallazgos del curso que afectan al servicio
