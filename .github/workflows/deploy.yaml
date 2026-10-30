@@ -48,10 +48,11 @@ jobs:
         run: |
           echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > "$RUNNER_TEMP/kubeconfig"
           echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+      # La imagen del commit se fija antes de aplicar, para que haya un solo rollout.
+      - name: Fijar la imagen del commit
+        run: sed -i "s|${{ env.IMAGE }}:latest|${{ env.IMAGE }}:${{ github.sha }}|" k8s/deployment.yaml
       - name: Aplicar manifiestos
         run: kubectl apply -k k8s/
-      - name: Fijar la imagen del commit
-        run: kubectl set image deployment/summaries summaries=${{ env.IMAGE }}:${{ github.sha }} -n grupo-resumenes
       - name: Esperar el despliegue
         run: |
           kubectl rollout status deployment/summaries -n grupo-resumenes --timeout=180s

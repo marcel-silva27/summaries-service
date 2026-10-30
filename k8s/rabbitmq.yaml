@@ -35,14 +35,13 @@ spec:
           resources:
             requests: {cpu: 100m, memory: 192Mi}
             limits: {cpu: 300m, memory: 384Mi}
+          # Probes TCP: `rabbitmq-diagnostics` corre como root y, si se adelanta al servidor, crea
+          # .erlang.cookie con ese dueño y el servidor ya no puede leerla (eacces).
           readinessProbe:
-            exec:
-              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            tcpSocket: {port: 5672}
             periodSeconds: 10
-            timeoutSeconds: 10
           livenessProbe:
-            exec:
-              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            tcpSocket: {port: 5672}
             initialDelaySeconds: 60
             periodSeconds: 30
-            timeoutSeconds: 10
+            failureThreshold: 4
