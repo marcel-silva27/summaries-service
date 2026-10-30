@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: summaries
+spec:
+  replicas: 2
+  # La cuota de limits del namespace no deja margen para un pod extra durante el despliegue.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: summaries
+  template:
+    metadata:
+      labels:
+        app: summaries
+    spec:
+      terminationGracePeriodSeconds: 25
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: summaries
+          image: ghcr.io/marcel-silva27/summaries-service:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: summaries-config
+          env:
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: summaries-llm
+                  key: LLM_API_KEY
+                  optional: true
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+          # /health no consulta Mongo ni RabbitMQ; el arranque sí necesita Mongo, por eso el startupProbe.
+          startupProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 10

@@ -3,3 +3,4 @@ __pycache__/
 .env
 .venv/
 .pytest_cache/
+inf326-est-21717.kubeconfig
