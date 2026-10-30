@@ -1,0 +1,48 @@
+# Sin PVC (la cuota permite uno solo): si el pod se reinicia las colas se pierden, pero los eventos
+# siguen en la outbox de Mongo y se vuelven a publicar (entrega al menos una vez).
+apiVersion: v1
+kind: Service
+metadata:
+  name: summaries-rabbitmq
+spec:
+  selector:
+    app: summaries-rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: summaries-rabbitmq
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: summaries-rabbitmq
+  template:
+    metadata:
+      labels:
+        app: summaries-rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4-alpine
+          ports:
+            - containerPort: 5672
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {cpu: 300m, memory: 384Mi}
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            periodSeconds: 10
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10

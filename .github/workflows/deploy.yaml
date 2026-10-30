@@ -1,0 +1,58 @@
+name: ci-cd
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose -p summaries-tests -f compose.test.yaml up --build --abort-on-container-exit --exit-code-from tests --attach tests
+      - if: always()
+        run: docker compose -p summaries-tests -f compose.test.yaml down -v
+
+  build:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar kubeconfig
+        run: |
+          echo "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+      - name: Aplicar manifiestos
+        run: kubectl apply -k k8s/
+      - name: Fijar la imagen del commit
+        run: kubectl set image deployment/summaries summaries=${{ env.IMAGE }}:${{ github.sha }} -n grupo-resumenes
+      - name: Esperar el despliegue
+        run: |
+          kubectl rollout status deployment/summaries -n grupo-resumenes --timeout=180s
+          kubectl get pods,hpa -n grupo-resumenes
