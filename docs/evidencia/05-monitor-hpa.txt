@@ -1,0 +1,363 @@
+===== 00:03:44
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     60m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 50Mi
+   top summaries-94cd848df-mzhxj 7m 49Mi
+===== 00:03:55
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     60m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 50Mi
+   top summaries-94cd848df-mzhxj 7m 49Mi
+===== 00:04:07
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     60m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 50Mi
+   top summaries-94cd848df-mzhxj 7m 49Mi
+===== 00:04:19
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     61m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 50Mi
+   top summaries-94cd848df-mzhxj 7m 49Mi
+===== 00:04:31
+summaries   Deployment/summaries   cpu: 27%/60%   2     4     2     61m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 21m 51Mi
+   top summaries-94cd848df-mzhxj 33m 50Mi
+===== 00:04:43
+summaries   Deployment/summaries   cpu: 63%/60%   2     4     2     61m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 48m 51Mi
+   top summaries-94cd848df-mzhxj 79m 50Mi
+===== 00:04:55
+summaries   Deployment/summaries   cpu: 74%/60%   2     4     2     61m
+   summaries-94cd848df-4nvpd 0/1 ContainerCreating
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 54m 51Mi
+   top summaries-94cd848df-mzhxj 94m 50Mi
+===== 00:05:07
+summaries   Deployment/summaries   cpu: 74%/60%   2     4     2     61m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 186m 49Mi
+   top summaries-94cd848df-gjvbh 50m 51Mi
+   top summaries-94cd848df-mzhxj 104m 50Mi
+===== 00:05:19
+summaries   Deployment/summaries   cpu: 77%/60%   2     4     3     62m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 186m 49Mi
+   top summaries-94cd848df-gjvbh 50m 51Mi
+   top summaries-94cd848df-mzhxj 104m 50Mi
+===== 00:05:31
+summaries   Deployment/summaries   cpu: 82%/60%   2     4     3     62m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 174m 49Mi
+   top summaries-94cd848df-gjvbh 48m 51Mi
+   top summaries-94cd848df-mzhxj 116m 50Mi
+===== 00:05:43
+summaries   Deployment/summaries   cpu: 55%/60%   2     4     3     62m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 10m 49Mi
+   top summaries-94cd848df-gjvbh 46m 51Mi
+   top summaries-94cd848df-mzhxj 110m 50Mi
+===== 00:05:55
+summaries   Deployment/summaries   cpu: 51%/60%   2     4     3     62m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 12m 50Mi
+   top summaries-94cd848df-gjvbh 46m 51Mi
+   top summaries-94cd848df-mzhxj 96m 50Mi
+===== 00:06:07
+summaries   Deployment/summaries   cpu: 51%/60%   2     4     3     62m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 15m 50Mi
+   top summaries-94cd848df-gjvbh 50m 51Mi
+   top summaries-94cd848df-mzhxj 96m 50Mi
+===== 00:06:19
+summaries   Deployment/summaries   cpu: 53%/60%   2     4     3     63m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 15m 50Mi
+   top summaries-94cd848df-gjvbh 50m 51Mi
+   top summaries-94cd848df-mzhxj 96m 50Mi
+===== 00:06:31
+summaries   Deployment/summaries   cpu: 57%/60%   2     4     3     63m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 11m 50Mi
+   top summaries-94cd848df-gjvbh 43m 51Mi
+   top summaries-94cd848df-mzhxj 118m 50Mi
+===== 00:06:43
+summaries   Deployment/summaries   cpu: 52%/60%   2     4     3     63m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 10m 50Mi
+   top summaries-94cd848df-gjvbh 49m 51Mi
+   top summaries-94cd848df-mzhxj 98m 51Mi
+===== 00:06:55
+summaries   Deployment/summaries   cpu: 55%/60%   2     4     3     63m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 12m 50Mi
+   top summaries-94cd848df-gjvbh 51m 51Mi
+   top summaries-94cd848df-mzhxj 102m 51Mi
+===== 00:07:07
+summaries   Deployment/summaries   cpu: 55%/60%   2     4     3     63m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 11m 50Mi
+   top summaries-94cd848df-gjvbh 50m 51Mi
+   top summaries-94cd848df-mzhxj 112m 50Mi
+===== 00:07:19
+summaries   Deployment/summaries   cpu: 57%/60%   2     4     3     64m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 11m 50Mi
+   top summaries-94cd848df-gjvbh 50m 51Mi
+   top summaries-94cd848df-mzhxj 112m 50Mi
+===== 00:07:31
+summaries   Deployment/summaries   cpu: 63%/60%   2     4     3     64m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 12m 50Mi
+   top summaries-94cd848df-gjvbh 47m 51Mi
+   top summaries-94cd848df-mzhxj 83m 50Mi
+===== 00:07:59
+summaries   Deployment/summaries   cpu: 52%/60%   2     4     3     64m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 10m 50Mi
+   top summaries-94cd848df-gjvbh 52m 51Mi
+   top summaries-94cd848df-mzhxj 112m 50Mi
+===== 00:08:26
+summaries   Deployment/summaries   cpu: 51%/60%   2     4     3     65m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 9m 50Mi
+   top summaries-94cd848df-gjvbh 51m 51Mi
+   top summaries-94cd848df-mzhxj 95m 50Mi
+===== 00:08:43
+summaries   Deployment/summaries   cpu: 10%/60%   2     4     3     65m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 6m 50Mi
+   top summaries-94cd848df-gjvbh 19m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:08:56
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     3     65m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 6m 50Mi
+   top summaries-94cd848df-gjvbh 7m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:09:08
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     3     66m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 6m 50Mi
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:09:20
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     3     66m
+   summaries-94cd848df-4nvpd 1/1 Running
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-4nvpd 6m 50Mi
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:09:32
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     3     66m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:09:44
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     66m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 7m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:09:56
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     66m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:10:08
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     67m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:10:20
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     67m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:10:31
+summaries   Deployment/summaries   cpu: 8%/60%   2     4     2     67m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 8m 51Mi
+   top summaries-94cd848df-mzhxj 8m 50Mi
+===== 00:10:43
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     67m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:10:55
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     67m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:11:07
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     67m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:11:19
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     68m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:11:31
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     68m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:11:43
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     68m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:11:55
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     68m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:12:07
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     68m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:12:19
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     69m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:12:30
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     69m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:12:42
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     69m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:12:55
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     69m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:13:07
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     69m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:13:19
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     70m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:13:31
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     70m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:13:43
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     70m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:13:55
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     70m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 5m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:14:06
+summaries   Deployment/summaries   cpu: 5%/60%   2     4     2     70m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:14:18
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     71m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 7m 50Mi
+===== 00:14:30
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     71m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:14:42
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     71m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 6m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi
+===== 00:14:54
+summaries   Deployment/summaries   cpu: 6%/60%   2     4     2     71m
+   summaries-94cd848df-gjvbh 1/1 Running
+   summaries-94cd848df-mzhxj 1/1 Running
+   top summaries-94cd848df-gjvbh 5m 51Mi
+   top summaries-94cd848df-mzhxj 6m 50Mi

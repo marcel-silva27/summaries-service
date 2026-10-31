@@ -1,0 +1,47 @@
+### POST http://resumenes.134.199.176.3.nip.io/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/summaries
+HTTP/1.1 202 Accepted
+Location: /api/v1/summaries/5d51a0ee-d939-4c57-b22d-51f12c37c9ae
+{"summary_id":"5d51a0ee-d939-4c57-b22d-51f12c37c9ae","messageState":"pendiente"}
+23:13:29 polling #1 -> pendiente
+23:13:32 polling #2 -> pendiente
+23:13:36 polling #3 -> pendiente
+23:13:39 polling #4 -> pendiente
+23:13:42 polling #5 -> pendiente
+23:13:46 polling #6 -> pendiente
+23:13:49 polling #7 -> pendiente
+23:13:52 polling #8 -> pendiente
+23:13:56 polling #9 -> pendiente
+23:13:59 polling #10 -> pendiente
+23:14:02 polling #11 -> pendiente
+23:14:06 polling #12 -> pendiente
+23:14:09 polling #13 -> pendiente
+23:14:12 polling #14 -> pendiente
+23:14:15 polling #15 -> pendiente
+23:14:19 polling #16 -> pendiente
+23:14:22 polling #17 -> pendiente
+23:14:25 polling #18 -> pendiente
+23:14:29 polling #19 -> pendiente
+23:14:32 polling #20 -> pendiente
+23:14:35 polling #21 -> pendiente
+23:14:39 polling #22 -> pendiente
+23:14:42 polling #23 -> pendiente
+23:14:45 polling #24 -> pendiente
+23:14:49 polling #25 -> pendiente
+23:14:52 polling #26 -> pendiente
+23:14:55 polling #27 -> pendiente
+23:14:59 polling #28 -> pendiente
+23:15:02 polling #29 -> pendiente
+23:15:06 polling #30 -> pendiente
+### GET http://resumenes.134.199.176.3.nip.io/api/v1/summaries/5d51a0ee-d939-4c57-b22d-51f12c37c9ae
+{
+    "id": "5d51a0ee-d939-4c57-b22d-51f12c37c9ae",
+    "channel_id": "0ac7c358-854d-4ceb-911e-962c2f09a8c0",
+    "requested_by": "aadbfe21-8446-4e2b-afd4-577265dedda7",
+    "messageState": "pendiente",
+    "timeInterval": null,
+    "content": null,
+    "structured": null,
+    "error": null,
+    "created_at": "2026-10-30T23:13:28.147000Z",
+    "updated_at": "2026-10-30T23:13:28.147000Z"
+}

@@ -1,0 +1,76 @@
+# Prueba de carga para evidenciar el autoscaling (no forma parte de kustomization.yaml).
+# Solo lee la base propia (GET /api/v1/summaries/{id}): no llama al núcleo ni al LLM y no crea datos.
+# Ataca el Service interno, sin pasar por el Ingress compartido.
+#
+#   kubectl create -f k8s/loadtest/job.yaml   (SUMMARY_ID debe ser un resumen existente)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: summaries-load-
+  labels:
+    app: summaries-load
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: summaries-load
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: load
+          image: ghcr.io/marcel-silva27/summaries-service:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          # La cuota de limits del namespace (2 CPU) queda justa con 4 réplicas del servicio.
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 200m, memory: 256Mi}
+          env:
+            - name: TARGET
+              value: http://summaries/api/v1/summaries/5d51a0ee-d939-4c57-b22d-51f12c37c9ae
+            - name: DURATION_SECONDS
+              value: "240"
+            - name: CONCURRENCY
+              value: "40"
+          command:
+            - python
+            - -c
+            - |
+              import asyncio, os, time, collections
+              import httpx
+
+              target, duration = os.environ["TARGET"], float(os.environ["DURATION_SECONDS"])
+              stats = collections.Counter()
+
+              async def worker(client, deadline):
+                  while time.monotonic() < deadline:
+                      try:
+                          stats[(await client.get(target)).status_code] += 1
+                      except httpx.HTTPError as error:
+                          stats[type(error).__name__] += 1
+
+              async def report(deadline):
+                  start, last = time.monotonic(), 0
+                  while time.monotonic() < deadline:
+                      await asyncio.sleep(15)
+                      total = sum(stats.values())
+                      print(f"t={time.monotonic() - start:4.0f}s rps={(total - last) / 15:6.1f} {dict(stats)}", flush=True)
+                      last = total
+
+              async def main():
+                  deadline = time.monotonic() + duration
+                  limits = httpx.Limits(max_connections=int(os.environ["CONCURRENCY"]))
+                  async with httpx.AsyncClient(timeout=10, limits=limits) as client:
+                      await asyncio.gather(report(deadline),
+                                           *(worker(client, deadline) for _ in range(int(os.environ["CONCURRENCY"]))))
+                  print("total", dict(stats), flush=True)
+
+              asyncio.run(main())
