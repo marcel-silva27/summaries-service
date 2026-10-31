@@ -2,9 +2,11 @@
 
 Microservicio vertical para la cátedra de Microservicios (trabajo final). Se construye sobre el chat base del curso (`users`, `channels`, `messages`; `localhost:8001/8002/8003`, material en https://github.com/rmasad/microservicios). Repositorio público: https://github.com/marcel-silva27/summaries-service.
 
-**Enunciado:** implementar el microservicio asignado como API REST, emitir eventos por cada transacción, con documentación, esquemas, versionamiento y manejo de errores; correr con Docker/docker-compose; código en un repositorio público. *No* exige Gateway, GraphQL ni despliegue en Kubernetes.
+**Enunciado:** implementar el microservicio asignado como API REST, emitir eventos por cada transacción, con documentación, esquemas, versionamiento y manejo de errores; correr con Docker/docker-compose; código en un repositorio público. *No* exige Gateway ni GraphQL.
 
-Este archivo es el contexto estable del proyecto. Detalle técnico: [`docs/REFERENCIA.md`](./docs/REFERENCIA.md). Cómo ejecutarlo: [`README.md`](./README.md). Qué se verificó: [`docs/VERIFICACION.md`](./docs/VERIFICACION.md). Reglas rápidas para agentes: [`AGENTS.md`](./AGENTS.md).
+**Tarea de despliegue:** desplegarlo en el cluster Kubernetes común del curso, sobre el chat base ya desplegado (sin redesplegar ni modificar el core), idealmente con CI, con readiness/liveness y autoscaling, y entregar evidencia del flujo integrado y del escalamiento. Hecho: ver [`docs/DESPLIEGUE.md`](./docs/DESPLIEGUE.md).
+
+Este archivo es el contexto estable del proyecto. Detalle técnico: [`docs/REFERENCIA.md`](./docs/REFERENCIA.md). Cómo ejecutarlo: [`README.md`](./README.md). Qué se verificó: [`docs/VERIFICACION.md`](./docs/VERIFICACION.md). Despliegue y evidencia: [`docs/DESPLIEGUE.md`](./docs/DESPLIEGUE.md). Reglas rápidas para agentes: [`AGENTS.md`](./AGENTS.md).
 
 ## Qué hace
 

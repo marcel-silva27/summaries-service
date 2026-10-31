@@ -1,0 +1,50 @@
+### GET http://resumenes.134.199.176.3.nip.io/api/v1/summaries/5d51a0ee-d939-4c57-b22d-51f12c37c9ae
+{
+    "id": "5d51a0ee-d939-4c57-b22d-51f12c37c9ae",
+    "channel_id": "0ac7c358-854d-4ceb-911e-962c2f09a8c0",
+    "requested_by": "aadbfe21-8446-4e2b-afd4-577265dedda7",
+    "messageState": "completada",
+    "timeInterval": null,
+    "content": "El equipo planific\u00f3 el lanzamiento de la versi\u00f3n 2.0 de la app, fijando la fecha, definiendo tareas individuales y estableciendo un plan de contingencia y la exclusi\u00f3n de la integraci\u00f3n de pagos.\n\n**Decisiones tomadas:**\n- Lanzamiento de la versi\u00f3n 2.0 el viernes 13 de noviembre a las 10:00\n- Descartar la integraci\u00f3n con el sistema de pagos para esta versi\u00f3n y dejarla para la 2.1\n- Posponer al lunes 16 si las pruebas fallan\n\n**Eventos:**\n- Lanzamiento de la versi\u00f3n 2.0 (viernes 13 de noviembre a las 10:00)\n- Reuni\u00f3n de seguimiento para dar el visto bueno final (jueves 12 a las 16:00)\n\n**Tareas asignadas:**\n- Redactar las notas de la versi\u00f3n, tenerlas listas el mi\u00e9rcoles 11 \u2014 Responsable: resumenes-test-bruno\n- Pruebas de regresi\u00f3n en el ambiente de staging hasta el jueves 12 \u2014 Responsable: resumenes-test-carla\n- Coordinar con soporte para que est\u00e9n atentos el d\u00eda del lanzamiento \u2014 Responsable: resumenes-test-ana",
+    "structured": {
+        "overview": "El equipo planific\u00f3 el lanzamiento de la versi\u00f3n 2.0 de la app, fijando la fecha, definiendo tareas individuales y estableciendo un plan de contingencia y la exclusi\u00f3n de la integraci\u00f3n de pagos.",
+        "decisions": [
+            "Lanzamiento de la versi\u00f3n 2.0 el viernes 13 de noviembre a las 10:00",
+            "Descartar la integraci\u00f3n con el sistema de pagos para esta versi\u00f3n y dejarla para la 2.1",
+            "Posponer al lunes 16 si las pruebas fallan"
+        ],
+        "events": [
+            {
+                "description": "Lanzamiento de la versi\u00f3n 2.0",
+                "when": "viernes 13 de noviembre a las 10:00"
+            },
+            {
+                "description": "Reuni\u00f3n de seguimiento para dar el visto bueno final",
+                "when": "jueves 12 a las 16:00"
+            }
+        ],
+        "tasks": [
+            {
+                "description": "Redactar las notas de la versi\u00f3n, tenerlas listas el mi\u00e9rcoles 11",
+                "assignee": "resumenes-test-bruno"
+            },
+            {
+                "description": "Pruebas de regresi\u00f3n en el ambiente de staging hasta el jueves 12",
+                "assignee": "resumenes-test-carla"
+            },
+            {
+                "description": "Coordinar con soporte para que est\u00e9n atentos el d\u00eda del lanzamiento",
+                "assignee": "resumenes-test-ana"
+            }
+        ]
+    },
+    "error": null,
+    "created_at": "2026-10-30T23:13:28.147000Z",
+    "updated_at": "2026-10-30T23:45:41.885000Z"
+}
+### GET http://resumenes.134.199.176.3.nip.io/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/summaries/latest -> 200
+### GET http://resumenes.134.199.176.3.nip.io/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/summaries
+  5d51a0ee-d939-4c57-b22d-51f12c37c9ae completada
+### GET http://resumenes.134.199.176.3.nip.io/api/v1/events
+  {'type': 'summary.requested', 'occurred_at': '2026-10-30T23:13:28.147000Z'} {'channel_id': '0ac7c358-854d-4ceb-911e-962c2f09a8c0', 'requested_by': 'aadbfe21-8446-4e2b-afd4-577265dedda7', 'timeInte
+  {'type': 'summary.generated', 'occurred_at': '2026-10-30T23:45:41.885000Z'} {'summary_id': '5d51a0ee-d939-4c57-b22d-51f12c37c9ae', 'channel_id': '0ac7c358-854d-4ceb-911e-962c2f09a8c0', 'requested_

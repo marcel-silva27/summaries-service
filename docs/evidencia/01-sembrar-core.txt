@@ -1,0 +1,21 @@
+POST users/api/v1/users -> 201
+POST users/api/v1/users -> 201
+POST users/api/v1/users -> 201
+  usuario ana: {"id": "aadbfe21-8446-4e2b-afd4-577265dedda7", "display_name": "resumenes-test-ana"}
+  usuario bruno: {"id": "d8589988-f181-439f-b8b8-d23b3f0a3348", "display_name": "resumenes-test-bruno"}
+  usuario carla: {"id": "d4ffa788-0145-4a44-9eb3-2447b9fbfca9", "display_name": "resumenes-test-carla"}
+POST channels/api/v1/channels -> 201
+  canal: {"id": "0ac7c358-854d-4ceb-911e-962c2f09a8c0", "name": "resumenes-test-planificacion"}
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+POST messages/api/v1/channels/0ac7c358-854d-4ceb-911e-962c2f09a8c0/messages -> 201
+RESULT {"channel_id": "0ac7c358-854d-4ceb-911e-962c2f09a8c0", "user_ids": {"ana": "aadbfe21-8446-4e2b-afd4-577265dedda7", "bruno": "d8589988-f181-439f-b8b8-d23b3f0a3348", "carla": "d4ffa788-0145-4a44-9eb3-2447b9fbfca9"}}
