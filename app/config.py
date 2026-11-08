@@ -40,8 +40,9 @@ WORKER_MAX_ATTEMPTS = int(os.environ.get("WORKER_MAX_ATTEMPTS", "3"))
 
 MESSAGE_THRESHOLD = int(os.environ.get("MESSAGE_THRESHOLD", "50"))
 
-# Exchange del chat base: topic y NO durable (debe coincidir con `messages`).
+# Exchange topic del chat: la durabilidad debe coincidir con `messages`.
 CHAT_EXCHANGE = "chat"
+CHAT_EXCHANGE_DURABLE = os.environ.get("CHAT_EXCHANGE_DURABLE", "false").lower() == "true"
 SUMMARIES_EXCHANGE = "summaries"
-# El Gateway (aún inexistente) publica aquí la entrada de un usuario a un canal. Durable.
+# Exchange reservado al productor de entradas a canales. Durable.
 GATEWAY_EXCHANGE = "gateway"

@@ -1,6 +1,12 @@
 # Desarrollo: código montado y recarga automática.
 #   docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up --build
 services:
+  gateway:
+    volumes:
+      - ./gateway:/app/gateway
+      - ./web:/app/web
+      - ./app:/app/app
+    command: ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
   summaries:
     volumes:
       - ./app:/app/app

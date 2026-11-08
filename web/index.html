@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Chat de equipo con resúmenes, búsqueda, archivos y encuestas.">
+  <title>Hilo · Chat de equipo</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%236b5ce7'/%3E%3Cpath d='M9 9v14m14-14v14M9 16h14' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="/" aria-label="Hilo, inicio"><span class="brand-mark">h</span>hilo<span class="brand-dot">.</span></a>
+    <div class="workspace"><span class="workspace-icon">E</span><div><strong>Espacio de equipo</strong><small>Todo empieza con una conversación</small></div></div>
+    <div class="sidebar-heading"><span>CANALES</span><button class="icon-button" id="new-channel" title="Crear canal" aria-label="Crear canal">+</button></div>
+    <nav id="channel-list" aria-label="Canales"><p class="sidebar-note">Cargando canales…</p></nav>
+    <div class="sidebar-bottom"><span class="connection-dot" id="connection-dot"></span><span id="connection">Conectando…</span><button class="icon-button" id="retry-connection" title="Reconectar" aria-label="Reconectar">↻</button></div>
+  </aside>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="breadcrumb"><button class="mobile-only icon-button" id="mobile-menu" aria-label="Mostrar canales">☰</button><span>Espacio de equipo</span><span class="separator">/</span><strong id="breadcrumb-channel">Conversaciones</strong></div>
+      <div class="identity"><span class="live-label"><i></i> Tu equipo, conectado</span><label class="sr-only" for="user-select">Usuario actual</label><select id="user-select"><option value="">Selecciona un usuario</option></select><button class="avatar-button" id="new-user" title="Crear usuario" aria-label="Crear usuario">+</button><button class="icon-button" id="join-user" title="Usar un usuario existente" aria-label="Usar un usuario existente">↗</button></div>
+    </header>
+
+    <main>
+      <section class="conversation" aria-label="Canal">
+        <div class="channel-header"><div class="channel-icon">#</div><div><h1 id="channel-title">Tu equipo, en contexto.</h1><p id="channel-description">Elige un canal y retoma la conversación.</p></div><button class="icon-button" id="reload" title="Actualizar canal" aria-label="Actualizar canal">↻</button></div>
+        <div class="tabs" id="tabs" role="tablist" aria-label="Contenido del canal">
+          <button role="tab" id="tab-messages" data-tab="messages" aria-selected="true" aria-controls="messages-view">Conversación</button>
+          <button role="tab" id="tab-search" data-tab="search" aria-selected="false" aria-controls="search-view">Búsqueda</button>
+          <button role="tab" id="tab-files" data-tab="files" aria-selected="false" aria-controls="files-view">Archivos</button>
+          <button role="tab" id="tab-polls" data-tab="polls" aria-selected="false" aria-controls="polls-view">Encuestas</button>
+        </div>
+
+        <section id="messages-view" class="view" role="tabpanel" aria-labelledby="tab-messages">
+          <div id="messages" class="messages" aria-live="polite"><div class="empty-state"><span class="empty-symbol">#</span><h2>Un lugar para ponerse al día</h2><p>Comparte ideas, guarda decisiones<br>y encuentra lo importante del equipo.</p></div></div>
+          <form id="message-form" class="composer"><label class="sr-only" for="message-input">Mensaje</label><textarea id="message-input" rows="2" maxlength="4000" placeholder="Escribe un mensaje para el equipo…" required></textarea><div class="composer-bottom"><span>Enter para enviar · Shift + Enter para una nueva línea</span><button class="primary" type="submit" id="send-message">Enviar <span aria-hidden="true">↗</span></button></div></form>
+        </section>
+
+        <section id="search-view" class="view scroll-view" role="tabpanel" aria-labelledby="tab-search" hidden>
+          <div class="section-intro"><h2>Encuentra el hilo</h2><p>Busca mensajes y decisiones dentro de este canal.</p></div>
+          <form id="search-form" class="search-form"><label class="sr-only" for="search-query">Texto a buscar</label><div class="search-box"><span aria-hidden="true">⌕</span><input id="search-query" maxlength="1024" placeholder="¿Qué estás buscando?"><button class="primary" type="submit">Buscar</button></div><div class="search-filters"><label>Autor<select id="search-author"><option value="">Todos</option></select></label><label>Orden<select id="search-order"><option value="desc">Más recientes</option><option value="asc">Más antiguos</option></select></label><label class="checkbox"><input type="checkbox" id="search-links"> Con enlaces</label></div><details class="date-filters"><summary>Filtrar por fechas</summary><div class="form-row"><label>Desde<input type="datetime-local" id="search-start"></label><label>Hasta<input type="datetime-local" id="search-end"></label></div></details></form>
+          <div class="results-heading"><span id="search-count">Los resultados aparecerán aquí</span></div><div id="search-results"></div><div class="pagination"><button class="secondary" id="search-prev" hidden>Anterior</button><button class="secondary" id="search-next" hidden>Siguiente</button></div>
+        </section>
+
+        <section id="files-view" class="view scroll-view" role="tabpanel" aria-labelledby="tab-files" hidden>
+          <div class="section-intro inline"><div><h2>Lo que compartimos</h2><p>Archivos y enlaces de la conversación.</p></div><button class="primary" id="upload-file">+ Subir archivo</button><input id="file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain" hidden></div>
+          <div class="files-toolbar"><label class="sr-only" for="media-category">Categoría</label><select id="media-category"><option value="">Todos los archivos</option><option value="IMAGE">Imágenes</option><option value="DOCUMENT">Documentos</option><option value="LINK">Enlaces</option></select><span id="quota" class="muted">Selecciona un usuario para ver los archivos.</span></div><div class="file-grid" id="gallery"></div><button class="secondary load-more" id="files-more" hidden>Cargar más</button>
+        </section>
+
+        <section id="polls-view" class="view scroll-view" role="tabpanel" aria-labelledby="tab-polls" hidden>
+          <div class="section-intro inline"><div><h2>Decidamos en equipo</h2><p>Crea una encuesta y dale voz a la conversación.</p></div><button class="primary" id="new-poll">+ Crear encuesta</button></div><div class="poll-toolbar"><span class="muted">Las encuestas de este canal</span><button class="text-button" id="import-poll">Abrir por ID ↗</button></div><div id="poll-list"></div>
+        </section>
+      </section>
+
+      <aside class="summary-panel" aria-label="Resúmenes del canal">
+        <div class="summary-heading"><span class="sparkle" aria-hidden="true">✦</span><h2>Lo importante, a mano</h2></div><p class="summary-subtitle">Menos scroll. Más contexto.</p>
+        <div class="summary-card"><div class="summary-card-title"><strong>Resumen del canal</strong><span class="status" id="summary-status">Sin resumen</span></div><div id="summary-content" class="summary-content"><div class="summary-empty"><span class="summary-lines" aria-hidden="true">≡</span><h3>Retoma donde quedaron</h3><p>Reúne las decisiones, eventos y tareas de la conversación en un solo lugar.</p></div></div><label class="sr-only" for="summary-history">Historial de resúmenes</label><select id="summary-history" hidden></select><button class="primary summary-action" id="request-summary">✦ Generar resumen</button><details class="summary-range"><summary>Elegir un intervalo</summary><label>Desde<input type="datetime-local" id="summary-start"></label><label>Hasta<input type="datetime-local" id="summary-end"></label><p>Sin intervalo se resumen los mensajes nuevos.</p></details></div>
+        <div class="summary-note"><span aria-hidden="true">↻</span><p>El resumen se actualiza cuando termina. Puedes seguir conversando mientras se prepara.</p></div><div class="context-footer"><span class="mini-brand">h.</span><p>Conversaciones que<br><strong>no pierden el hilo.</strong></p></div>
+      </aside>
+    </main>
+  </div>
+
+  <dialog id="user-dialog"><form id="user-form"><div class="dialog-heading"><h2>Tu lugar en la conversación</h2><button type="button" class="icon-button" data-close aria-label="Cerrar">×</button></div><p>Elige el nombre que verá tu equipo.</p><label>Nombre<input id="user-name" maxlength="80" placeholder="Por ejemplo, Sofía" required></label><button class="primary" type="submit">Crear usuario</button></form></dialog>
+  <dialog id="join-dialog"><form id="join-form"><div class="dialog-heading"><h2>Continuar como usuario</h2><button type="button" class="icon-button" data-close aria-label="Cerrar">×</button></div><p>Usa el identificador de un usuario del chat.</p><label>ID del usuario<input id="existing-user-id" required></label><button class="primary" type="submit">Continuar</button></form></dialog>
+  <dialog id="channel-dialog"><form id="channel-form"><div class="dialog-heading"><h2>Una nueva conversación</h2><button type="button" class="icon-button" data-close aria-label="Cerrar">×</button></div><p>Dale un espacio a ese proyecto o idea.</p><label>Nombre del canal<input id="channel-name" maxlength="80" placeholder="Por ejemplo, proyecto-final" required></label><button class="primary" type="submit">Crear canal</button></form></dialog>
+  <dialog id="poll-dialog"><form id="poll-form"><div class="dialog-heading"><h2>Pregúntale al equipo</h2><button type="button" class="icon-button" data-close aria-label="Cerrar">×</button></div><label>Pregunta<input id="poll-question" maxlength="500" placeholder="¿Cuándo hacemos la próxima reunión?" required></label><label>Opciones, una por línea<textarea id="poll-options" rows="4" placeholder="Lunes a las 10:00&#10;Martes a las 15:00" required></textarea></label><label>Duración en minutos<input id="poll-duration" type="number" min="1" max="1440" value="5" required></label><button class="primary" type="submit">Publicar encuesta</button></form></dialog>
+  <dialog id="import-poll-dialog"><form id="import-poll-form"><div class="dialog-heading"><h2>Abrir una encuesta</h2><button type="button" class="icon-button" data-close aria-label="Cerrar">×</button></div><p>Pega el ID compartido en la conversación.</p><label>ID de la encuesta<input id="poll-id" required></label><button class="primary" type="submit">Abrir encuesta</button></form></dialog>
+  <div id="toast" role="alert" hidden></div>
+</body>
+</html>

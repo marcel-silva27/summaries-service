@@ -16,6 +16,7 @@ Contrato y comportamiento **vigentes** del servicio, organizados por tema. Para 
 10. [Resumen automático](#resumen-automático)
 11. [Concurrencia, fallas y límites](#concurrencia-fallas-y-límites)
 12. [Hallazgos sobre el código del curso](#hallazgos-sobre-el-código-del-curso)
+13. [API Gateway](#api-gateway)
 
 ## Glosario
 
@@ -154,9 +155,9 @@ Broker propio `summaries-rabbitmq` (volumen `summaries-rabbitmq-data`, hostname 
 
 | Exchange | Tipo / durable | Uso |
 | --- | --- | --- |
-| `chat` | topic / **no** | El de `messages`; debe declararse igual o RabbitMQ rechaza (`PRECONDITION_FAILED`) |
+| `chat` | topic / configurable | `CHAT_EXCHANGE_DURABLE=false` en el original; true en los equipos nuevos. Debe coincidir con `messages` |
 | `summaries` | topic / sí | `summary.requested`, `summary.generated`, `summary.failed` |
-| `gateway` | topic / sí | `chat.channel.entered` (lo publica el Gateway) |
+| `gateway` | topic / sí | `chat.channel.entered` (productor externo o herramienta incluida) |
 | `summaries.deadletters` | topic / sí | Eventos rechazados |
 
 | Cola propia (durable) | Binding | Confirmación |
@@ -166,7 +167,7 @@ Broker propio `summaries-rabbitmq` (volumen `summaries-rabbitmq-data`, hostname 
 | `summaries_for_channel_entered_queue` | `gateway` / `chat.channel.entered` | Ack tras guardar la entrada |
 | `summaries_errors_queue` | `summaries.deadletters` / `#` | Inspección manual |
 
-`EventBroker` usa una conexión `pika.BlockingConnection` en un **hilo propio** (solo ese hilo toca pika) con prefetch 20; no llama al núcleo ni al LLM. Valida el sobre, la routing key, el `subject_id` y los datos; JSON inválido, sujetos incoherentes o el mismo ID con contenido distinto se rechazan sin reencolar y van a *dead letters*. Una falla de Mongo hace `nack` con reencolado y espera; una falla de AMQP reinicia la conexión y la topología sin borrar la outbox.
+`EventBroker` usa una conexión `pika.BlockingConnection` en un **hilo propio** (solo ese hilo toca pika) con prefetch 20; no llama al núcleo ni al LLM. Valida el sobre, la routing key, el `subject_id` y los datos; JSON inválido, sujetos incoherentes o el mismo ID con contenido distinto se rechazan sin reencolar y van a *dead letters*. En eventos de mensajes del núcleo tolera metadatos nuevos (`event_id`, `version`, `edited_at`) y conserva solo el contrato local. Una falla de Mongo hace `nack` con reencolado y espera; una falla de AMQP reinicia la conexión y la topología sin borrar la outbox.
 
 **Publicación (outbox).** Solicitudes y resultados se guardan en Mongo, dentro del resumen, y el hilo los publica con `delivery_mode=2`, confirmación del broker y `message_id = "{tipo}:{summary_id}"`. Se despierta con `notify()` al crearse la solicitud o terminar el worker; un sondeo de respaldo (`OUTBOX_POLL_SECONDS`, 5 s) y la publicación al reconectar cubren un aviso perdido. Cada intento incrementa `attempts` y un fallo guarda `last_error`. Las solicitudes se publican `mandatory` (tienen cola propia); los resultados **no**: sin suscriptores no se pierden, quedan en Mongo y en `GET /events`. No existe una transacción distribuida Mongo–RabbitMQ: la entrega es *al menos una vez*, y los efectos se deduplican.
 
@@ -205,14 +206,14 @@ El prompt prioriza decisiones, eventos y tareas con responsable, y prohíbe inve
 
 ## Resumen automático
 
-1. El Gateway publica `chat.channel.entered` (`gateway`, `data = {channel_id, user_id, entry_id}`). `entry_id` identifica la entrada y **debe conservarse al reintentar**. Un evento incoherente o sin alguno de los campos va a *dead letters* y no se guarda.
+1. Un productor externo publica `chat.channel.entered` (`gateway`, `data = {channel_id, user_id, entry_id}`). El gateway GraphQL incluido no publica este evento. `entry_id` identifica la entrada y **debe conservarse al reintentar**. Un evento incoherente o sin alguno de los campos va a *dead letters* y no se guarda.
 2. El consumidor solo **guarda** la entrada (`entries`, única por `entry_id`) y despierta al worker; las llamadas al núcleo las hace el worker, no el hilo de RabbitMQ.
 3. El worker valida canal y usuario, reconcilia el historial y cuenta los mensajes **sin cobertura de los últimos `LLM_MAX_DAYS`**. Si son **más de** `MESSAGE_THRESHOLD` (50 no dispara; 51 sí) crea una solicitud normal (`requested_by` = quien entró). Los más antiguos no cuentan: nunca entrarían a un resumen y dispararían la solicitud en cada entrada.
 4. **Exclusión e idempotencia:** índices únicos parciales — uno por `_entry_id` (reprocesar tras una caída devuelve la misma solicitud) y uno por canal mientras `_automatic_active` (a lo sumo una automática sin terminar por canal, aunque varios workers evalúen a la vez). La marca se libera al pasar a `completada` o `fallida`. Las solicitudes manuales no participan. Una entrada abandonada en `processing` se reclama al vencer su lease.
 
 `entries.outcome`: `requested`, `below_threshold`, `no_recent_messages`, `already_active`, `invalid_reference` (usuario o canal inexistente), `dependency_unavailable` (núcleo caído tras los intentos máximos) o `error`.
 
-Para probar sin Gateway: `python -m app.tools.publish_channel_entered CHANNEL_ID USER_ID [ENTRY_ID]` (repetir el `ENTRY_ID` simula un reintento).
+Para probar con la herramienta incluida: `python -m app.tools.publish_channel_entered CHANNEL_ID USER_ID [ENTRY_ID]` (repetir el `ENTRY_ID` simula un reintento).
 
 ## Concurrencia, fallas y límites
 
@@ -230,6 +231,22 @@ Verificado leyendo el demo de la Unidad 3 (`microservicios/03_Comunicación/demo
 - `messages` publica en el exchange `chat` (topic, **no durable**) con routing key = tipo del evento, sin mensajes persistentes. `users` y `channels` no publican al broker. Si el broker cae, `messages` ignora el error (sin outbox): puede haber mensajes sin evento, y por eso se reconcilia por API.
 - **Bug del demo:** en `users`, `channels` y `messages`, `insert_one(dict)` agrega `_id` (ObjectId) al diccionario que luego se devuelve y publica. Resultado: **los `POST` de creación responden 500 aunque el dato queda guardado**, y `messages` falla al serializar el evento **antes de publicarlo**: con el demo tal cual, `chat.message.created` nunca se emite. No se modificaron archivos del curso. Para probar hay que tolerar el 500, obtener los IDs de los `GET` y, para ejercitar el camino por eventos, publicar `chat.message.created` a mano en `chat`.
 - Contratos: dentro de la red `microsvcs` todos escuchan en el puerto 8000; los IDs son `uuid4` (campo `id`); `GET .../messages` devuelve la lista completa sin paginación, sin filtro por fecha y sin orden garantizado; los errores son `{"detail": ...}`; no hay autenticación.
-- El demo de la Unidad 4 trae un *gateway* GraphQL (Ariadne) que agrega servicios REST por HTTP; **no usa el broker** ni publica eventos, y es de otro dominio (players/teams). No existe un Gateway del chat: el servicio solo consume `chat.channel.entered` y publica `summary.generated`/`summary.failed`, que un Gateway futuro podría usar.
+- El demo de la Unidad 4 trae un *gateway* GraphQL (Ariadne) que agrega servicios REST por HTTP; **no usa el broker** ni publica eventos, y es de otro dominio (players/teams). Este repositorio incluye su propio Gateway de resúmenes, descrito abajo.
 - Al bajar el chat con `docker compose -p demo down` desaparece la red `microsvcs` (la crea ese proyecto); los volúmenes se conservan.
 - Convenciones del curso que se siguen: Python 3.12-slim, FastAPI, PyMongo, `pika`, `mongo:7` con volumen propio, rutas bajo `/api/v1`, `GET /health`, red externa `microsvcs`.
+
+## API Gateway
+
+`gateway.main:app` es un proceso FastAPI + Ariadne separado del servicio de resúmenes. Comparte imagen y red `microsvcs`; expone `/api/v1/graphql` en el puerto host 8080 y `/health`. Dentro de Docker tiene el alias `summaries-gateway`. No requiere Mongo, RabbitMQ ni key de Gemini para arrancar. La URL del servicio y CORS son configurables; [guía de uso](../gateway/README.md).
+
+Expone `requestSummary`, `getSummary`, `listSummaries` y `getLatestSummary` mediante la API REST de resúmenes, además de operaciones del chat y de los equipos de búsqueda, medios y encuestas. Cada URL es configurable. Valida entradas y respuestas con Pydantic y reutiliza los modelos del servicio. Las APIs de usuarios, canales y mensajes también siguen siendo dependencias del servicio de resúmenes.
+
+Otros equipos pueden usar `http://summaries-gateway:8000/api/v1/graphql` en la red compartida o conectar su propio gateway a los endpoints REST de `http://summaries:8000/api/v1`. Ambas interfaces conservan los IDs públicos del chat y el flujo de solicitud asíncrona.
+
+Un pool HTTP asíncrono compartido aplica timeout, sin reintentos ni redirecciones. Los campos son anulables para conservar resultados parciales. Los errores GraphQL tienen `extensions = {detail, status, service}`: 422 para entrada inválida, 504 para timeout, 503 para error de conexión, 502 para respuesta inválida o falla HTTP 5xx; conserva los códigos HTTP 4xx del servicio. No reenvía cuerpos de error. Los errores inesperados son genéricos con estado 500.
+
+El gateway no almacena datos ni emite eventos. `requestSummary` conserva el flujo asíncrono existente: devuelve `summary_id` y se consulta `getSummary` hasta estado terminal. El evento de entrada a canal sigue requiriendo un productor externo o la herramienta de prueba existente.
+
+La web estática de `web/` se sirve en `/`, desde el mismo proceso. Solo consulta GraphQL del gateway y sus rutas HTTP de archivos (`/api/v1/media/...`). Conserva usuarios seleccionados, IDs de encuestas y votos locales en el navegador; la fuente de verdad continúa siendo cada API. Las encuestas se descubren por `Poll ID:` en los anuncios, porque el servicio no tiene listado por canal. La búsqueda presenta `indexing` y `retry_after` ante HTTP 202. Subidas y descargas conservan la identidad `X-User-Id` y un límite de 10 MiB.
+
+`compose.peers.yaml` es opcional: construye las fuentes fijas descargadas por `tools/prepare_peers.py` en `.peers/` (ignorado), conecta los servicios a `microsvcs` y no publica sus puertos host. `compose.demo-test.yaml` simula Gemini exclusivamente en la grabación automatizada. La entrega y los límites están en [INTERFAZ.md](INTERFAZ.md).
