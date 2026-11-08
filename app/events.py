@@ -26,6 +26,15 @@ class _Envelope(BaseModel):
     data: dict
 
 
+class _CoreEnvelope(_Envelope):
+    # Los equipos agregan event_id e información compatible al sobre del chat.
+    model_config = ConfigDict(extra="ignore")
+
+
+class _CoreMessage(LocalMessage):
+    model_config = ConfigDict(extra="ignore")
+
+
 class EventBroker:
     def __init__(self, repository: MongoRepository, *, url: str | None = None,
                  queue_prefix: str = "summaries", on_request_received: Callable[[], None] | None = None):
@@ -58,8 +67,9 @@ class EventBroker:
         return parameters
 
     def declare_topology(self, channel) -> None:
-        # El núcleo declara chat NO durable: cambiar este valor rompe la integración.
-        channel.exchange_declare(exchange=config.CHAT_EXCHANGE, exchange_type="topic", durable=False)
+        # Debe coincidir con el núcleo: false en el original, true en los equipos nuevos.
+        channel.exchange_declare(exchange=config.CHAT_EXCHANGE, exchange_type="topic",
+                                 durable=config.CHAT_EXCHANGE_DURABLE)
         channel.exchange_declare(exchange=config.SUMMARIES_EXCHANGE, exchange_type="topic", durable=True)
         channel.exchange_declare(exchange=config.GATEWAY_EXCHANGE, exchange_type="topic", durable=True)
         channel.exchange_declare(exchange=self.dead_exchange, exchange_type="topic", durable=True)
@@ -164,11 +174,12 @@ class EventBroker:
 
     def _consume(self, channel, method, body: bytes, expected_type: str) -> None:
         try:
-            event = _Envelope.model_validate_json(body)
+            envelope = _CoreEnvelope if expected_type == "chat.message.created" else _Envelope
+            event = envelope.model_validate_json(body)
             if event.type != expected_type or method.routing_key != expected_type:
                 raise ValueError("Unexpected event type or routing key")
             if expected_type == "chat.message.created":
-                message = LocalMessage.model_validate(event.data)
+                message = LocalMessage.model_validate(_CoreMessage.model_validate(event.data).model_dump())
                 if message.id != event.subject_id:
                     raise ValueError("Event subject does not match message ID")
                 self.repository.upsert_message(message)

@@ -3,4 +3,6 @@ __pycache__/
 .env
 .venv/
 .pytest_cache/
+.peers/
+.artifacts/
 inf326-est-21717.kubeconfig

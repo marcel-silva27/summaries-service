@@ -1,0 +1,87 @@
+type Query {
+  listUsers: [User!]
+  getUser(id: ID!): User
+  listChannels: [Channel!]
+  listMessages(channel_id: ID!): [Message!]
+  getSummary(id: ID!): Summary
+  listSummaries(channel_id: ID!, limit: Int = 100, offset: Int = 0): [Summary!]
+  getLatestSummary(channel_id: ID!): Summary
+  searchMessages(channel_id: ID!, input: SearchInput): SearchResult
+  getPoll(id: ID!): Poll
+  listAttachments(channel_id: ID!, user_id: ID!, input: GalleryInput): Gallery
+  getQuota(channel_id: ID!, user_id: ID!): Quota
+}
+
+type Mutation {
+  createUser(input: UserInput!): User
+  createChannel(input: ChannelInput!): Channel
+  sendMessage(channel_id: ID!, input: MessageInput!): Message
+  requestSummary(channel_id: ID!, input: SummaryInput): SummaryAccepted
+  createPoll(input: PollInput!, idempotency_key: String!): Poll
+  votePoll(id: ID!, input: VoteInput!): Vote
+  closePoll(id: ID!, input: ClosePollInput!): Poll
+}
+
+type User { id: ID!, display_name: String! }
+type Channel { id: ID!, name: String! }
+type Message { id: ID!, channel_id: ID!, author_id: ID!, content: String!, created_at: String! }
+type SummaryAccepted { summary_id: ID!, messageState: String! }
+type Summary {
+  id: ID!
+  channel_id: ID!
+  requested_by: ID
+  messageState: String!
+  timeInterval: TimeInterval
+  content: String
+  structured: StructuredSummary
+  error: String
+  created_at: String!
+  updated_at: String!
+}
+type TimeInterval { start: String!, end: String! }
+type StructuredSummary { overview: String!, decisions: [String!]!, events: [SummaryEvent!]!, tasks: [SummaryTask!]! }
+type SummaryEvent { description: String!, when: String }
+type SummaryTask { description: String!, assignee: String }
+type SearchResult { total_results: Int!, messages: [SearchMessage!]!, indexing: Boolean!, retry_after: Int! }
+type SearchMessage { id: ID!, channel_id: ID!, author_id: ID!, content: String!, created_at: String!, highlights: [String!]! }
+type Poll {
+  poll_id: ID!
+  channel_id: ID!
+  author_id: ID!
+  question: String!
+  options: [PollOption!]!
+  status: String!
+  duration_minutes: Int!
+  closes_at: String!
+  created_at: String!
+  closed_at: String
+  total_votes: Int!
+}
+type PollOption { option_id: ID!, position: Int!, text: String!, vote_count: Int! }
+type Vote { poll_id: ID!, voter_id: ID!, option_id: ID!, cast_at: String! }
+type Preview { url: String!, final_url: String!, title: String!, description: String! }
+type MediaItem {
+  id: ID!, channel_id: ID!, category: String!, created_at: String!, uploader_id: ID,
+  filename: String, mime_type: String, size_bytes: Int, url: String, preview: Preview
+}
+type Gallery { items: [MediaItem!]!, limit: Int!, offset: Int! }
+type Quota {
+  channel_id: ID!, used_bytes: Int!, available_bytes: Int!, limit_bytes: Int!,
+  file_count: Int!, max_files: Int!, max_file_bytes: Int!
+}
+
+input UserInput { display_name: String! }
+input ChannelInput { name: String! }
+input MessageInput { author_id: ID!, content: String! }
+input TimeIntervalInput { start: String!, end: String! }
+input SummaryInput { user_id: ID, timeInterval: TimeIntervalInput }
+input PollInput {
+  channel_id: ID!, author_id: ID!, question: String!, options: [String!]!, duration_minutes: Int = 5
+}
+input VoteInput { voter_id: ID!, option_id: ID! }
+input ClosePollInput { author_id: ID! }
+input SearchInput {
+  content: String, author_id: [ID!], has: [String!], min_date: String, max_date: String,
+  sort_by: String = "timestamp", sort_order: String = "desc", limit: Int = 25, offset: Int = 0
+}
+input GalleryInput { category: String, limit: Int = 20, offset: Int = 0 }

@@ -2,7 +2,7 @@
 
 Microservicio vertical para la cátedra de Microservicios (trabajo final). Se construye sobre el chat base del curso (`users`, `channels`, `messages`; `localhost:8001/8002/8003`, material en https://github.com/rmasad/microservicios). Repositorio público: https://github.com/marcel-silva27/summaries-service.
 
-**Enunciado:** implementar el microservicio asignado como API REST, emitir eventos por cada transacción, con documentación, esquemas, versionamiento y manejo de errores; correr con Docker/docker-compose; código en un repositorio público. *No* exige Gateway ni GraphQL.
+**Enunciado:** implementar el microservicio asignado como API REST, emitir eventos por cada transacción, con documentación, esquemas, versionamiento y manejo de errores; correr con Docker/docker-compose; código en un repositorio público. La unidad de interfaz agrega una web (`web/`) y un Gateway GraphQL (`gateway/`) con las capacidades de los otros equipos. Guía de entrega y video en `docs/INTERFAZ.md`.
 
 **Tarea de despliegue:** desplegarlo en el cluster Kubernetes común del curso, sobre el chat base ya desplegado (sin redesplegar ni modificar el core), idealmente con CI, con readiness/liveness y autoscaling, y entregar evidencia del flujo integrado y del escalamiento. Hecho: ver [`docs/DESPLIEGUE.md`](./docs/DESPLIEGUE.md).
 
@@ -57,7 +57,7 @@ Piezas (`app/`): `routes/` (REST), `services.py` (solicitudes, ventanas, entrada
 | `chat.message.created` | Consume (historial local) |
 | `summary.requested` | Publica y consume |
 | `summary.generated` / `summary.failed` | Publica |
-| `chat.channel.entered` | Consume (lo publicaría un Gateway) |
+| `chat.channel.entered` | Consume (productor externo o herramienta incluida) |
 
 ## Decisiones vigentes
 
@@ -76,7 +76,8 @@ Piezas (`app/`): `routes/` (REST), `services.py` (solicitudes, ventanas, entrada
 - **Bug del demo**: sus `POST` de creación responden 500 aunque guardan el dato, y `messages` **nunca publica `chat.message.created`** (no puede serializar el `_id` de Mongo). Por eso el servicio reconcilia el historial con `GET .../messages` en cada ventana; no es un respaldo menor. No se tocó el código del curso; conviene avisar al profesor.
 - `messages` solo publica con `RABBITMQ_URL`, que su compose no define; el exchange `chat` es topic **no durable** y debe declararse igual.
 - `GET .../messages` devuelve todo el canal sin paginar ni filtrar por fecha, y `[]` aunque el canal no exista.
-- No existe Gateway del chat. El del demo de la Unidad 4 es de otro dominio y no usa el broker. Detalle en `docs/REFERENCIA.md`.
+- El gateway sirve la web en el puerto 8080 y conecta users/channels/messages/summaries/search/media/polls por sus APIs públicas. Los archivos también pasan por el gateway. Las URLs son configurables; otros equipos pueden consumir GraphQL o integrar la API REST de resúmenes. El Compose opcional de equipos fija versiones y evita publicar sus puertos host repetidos. Uso en `gateway/README.md`.
+- Los núcleos actualizados usan `chat` durable y agregan metadatos de eventos/mensajes: `CHAT_EXCHANGE_DURABLE` adapta la topología y el consumidor normaliza los campos compatibles. El valor por defecto sigue siendo false para el demo original; `compose.peers.yaml` fija true.
 
 ## Limitaciones conocidas
 
@@ -86,7 +87,7 @@ Piezas (`app/`): `routes/` (REST), `services.py` (solicitudes, ventanas, entrada
 
 ## Cómo trabajar aquí
 
-- Pruebas (solo Docker, ~260, usan Mongo y RabbitMQ reales y simulan el núcleo y Gemini):
+- Pruebas (solo Docker; usan Mongo y RabbitMQ reales y simulan el núcleo y Gemini):
   `docker compose -p summaries-tests -f compose.test.yaml up --build --abort-on-container-exit --exit-code-from tests --attach tests`, y luego `down -v`.
 - Si cambia un modelo de evento: `python -m app.tools.export_event_schemas` (una prueba falla si `docs/eventos/` se desincroniza).
 - Si cambia un contrato, el lenguaje ubicuo o la frontera de responsabilidad, actualizar este archivo y `docs/REFERENCIA.md`.

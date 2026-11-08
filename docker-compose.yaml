@@ -1,9 +1,30 @@
 services:
+  gateway:
+    build: .
+    command: ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${GATEWAY_PORT:-8080}:8000"
+    environment:
+      USERS_URL: ${USERS_URL:-http://users:8000}
+      CHANNELS_URL: ${CHANNELS_URL:-http://channels:8000}
+      MESSAGES_URL: ${MESSAGES_URL:-http://messages:8000}
+      SUMMARIES_URL: ${SUMMARIES_URL:-http://summaries:8000}
+      MEDIA_URL: ${MEDIA_URL:-http://media:8000}
+      SEARCH_URL: ${SEARCH_URL:-http://search:8000}
+      POLLS_URL: ${POLLS_URL:-http://polls-api:8004}
+      GATEWAY_TIMEOUT_SECONDS: ${GATEWAY_TIMEOUT_SECONDS:-10}
+      GATEWAY_CORS_ORIGINS: ${GATEWAY_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      microsvcs:
+        aliases: [summaries-gateway]
+
   summaries:
     build: .
     stop_grace_period: 20s
     ports:
-      - "8004:8000"
+      - "${SUMMARIES_PORT:-8004}:8000"
     # .env.example son los valores por defecto (versionados, sin secretos);
     # .env (ignorado por git) los sobrescribe, p. ej. con LLM_API_KEY.
     env_file:
@@ -36,7 +57,7 @@ services:
     image: rabbitmq:4-management-alpine
     hostname: summaries-rabbitmq
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "su-exec", "rabbitmq", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 3s
       timeout: 5s
       retries: 30
@@ -49,5 +70,5 @@ volumes:
 
 networks:
   microsvcs:
-    name: microsvcs
+    name: ${CHAT_NETWORK:-microsvcs}
     external: true

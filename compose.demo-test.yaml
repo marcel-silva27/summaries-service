@@ -1,0 +1,9 @@
+# Solo para la demostración automatizada: nunca llama a Gemini.
+# Usar con docker-compose.yaml y compose.peers.yaml, con un proyecto/red aislados.
+services:
+  summaries:
+    environment:
+      LLM_PROVIDER: mock
+      MESSAGE_THRESHOLD: "3"
+      WORKER_POLL_SECONDS: "1"
+      OUTBOX_POLL_SECONDS: "1"

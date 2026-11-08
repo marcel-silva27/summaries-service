@@ -15,7 +15,7 @@ services:
   rabbitmq:
     image: rabbitmq:4-management-alpine
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "su-exec", "rabbitmq", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 2s
       timeout: 5s
       retries: 30

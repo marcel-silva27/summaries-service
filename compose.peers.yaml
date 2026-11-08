@@ -1,0 +1,176 @@
+# Entorno opcional: primero ejecuta python tools/prepare_peers.py.
+# docker compose -f docker-compose.yaml -f compose.peers.yaml up -d --build --wait
+x-api-health: &api-health
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+  interval: 5s
+  timeout: 5s
+  retries: 30
+
+services:
+  summaries:
+    environment:
+      CHAT_EXCHANGE_DURABLE: "true"
+
+  users:
+    build: ./.peers/search/Tarea_Unidad_5_Despliegue/users
+    environment:
+      MONGODB_URL: mongodb://chat-mongodb:27017
+    depends_on:
+      chat-mongodb: {condition: service_healthy}
+    healthcheck: *api-health
+    networks: [microsvcs]
+
+  channels:
+    build: ./.peers/search/Tarea_Unidad_5_Despliegue/channels
+    environment:
+      MONGODB_URL: mongodb://chat-mongodb:27017
+    depends_on:
+      chat-mongodb: {condition: service_healthy}
+    healthcheck: *api-health
+    networks: [microsvcs]
+
+  messages:
+    build: ./.peers/search/Tarea_Unidad_5_Despliegue/messages
+    environment:
+      MONGODB_URL: mongodb://chat-mongodb:27017
+      USERS_URL: http://users:8000
+      CHANNELS_URL: http://channels:8000
+      RABBITMQ_URL: amqp://summaries-rabbitmq:5672
+    depends_on:
+      users: {condition: service_healthy}
+      channels: {condition: service_healthy}
+      summaries-rabbitmq: {condition: service_healthy}
+    healthcheck: *api-health
+    networks: [microsvcs]
+
+  media:
+    build: ./.peers/media/03_Comunicación/demo/media
+    environment:
+      MONGODB_URL: mongodb://media-mongodb:27017
+      USERS_URL: http://users:8000
+      CHANNELS_URL: http://channels:8000
+      RABBITMQ_URL: amqp://summaries-rabbitmq:5672
+      MEDIA_STORAGE: /media-storage
+    volumes: [peer-media-files:/media-storage]
+    depends_on:
+      media-mongodb: {condition: service_healthy}
+      summaries-rabbitmq: {condition: service_healthy}
+    healthcheck: *api-health
+    networks: [microsvcs]
+
+  search:
+    build: ./.peers/search/Tarea_Unidad_5_Despliegue/search
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+    depends_on:
+      elasticsearch: {condition: service_healthy}
+    healthcheck: *api-health
+    networks: [microsvcs]
+
+  search-indexer:
+    build: ./.peers/search/Tarea_Unidad_5_Despliegue/search
+    command: ["python", "-m", "app.indexer"]
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      CHANNELS_URL: http://channels:8000
+      MESSAGES_URL: http://messages:8000
+      POLL_SECONDS: "1"
+    depends_on:
+      elasticsearch: {condition: service_healthy}
+      messages: {condition: service_healthy}
+    networks: [microsvcs]
+
+  polls-migrate:
+    build: ./.peers/polls
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://polls:${POLLS_DB_PASSWORD:?Define POLLS_DB_PASSWORD en .env}@polls-postgres:5432/polls
+    depends_on:
+      polls-postgres: {condition: service_healthy}
+    networks: [microsvcs]
+
+  polls-api:
+    build: ./.peers/polls
+    environment:
+      DATABASE_URL: postgresql+asyncpg://polls:${POLLS_DB_PASSWORD:?Define POLLS_DB_PASSWORD en .env}@polls-postgres:5432/polls
+      MESSAGES_ENABLED: "true"
+      MESSAGES_BASE_URL: http://messages:8000
+      RABBITMQ_URL: amqp://summaries-rabbitmq:5672
+    depends_on:
+      polls-migrate: {condition: service_completed_successfully}
+      peer-events: {condition: service_completed_successfully}
+      messages: {condition: service_healthy}
+      summaries-rabbitmq: {condition: service_healthy}
+    healthcheck:
+      <<: *api-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=3)"]
+    networks: [microsvcs]
+
+  peer-events:
+    build: .
+    command: ["python", "-m", "gateway.prepare_broker"]
+    healthcheck: {disable: true}
+    environment:
+      BROKER_URL: amqp://summaries-rabbitmq:5672
+    depends_on:
+      summaries-rabbitmq: {condition: service_healthy}
+    networks: [microsvcs]
+
+  polls-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: polls
+      POSTGRES_USER: polls
+      POSTGRES_PASSWORD: ${POLLS_DB_PASSWORD:?Define POLLS_DB_PASSWORD en .env}
+    volumes: [peer-polls-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "polls"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    networks: [microsvcs]
+
+  elasticsearch:
+    image: elasticsearch:8.15.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes: [peer-search-data:/usr/share/elasticsearch/data]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs 'http://localhost:9200/_cluster/health?wait_for_status=yellow'"]
+      interval: 5s
+      timeout: 10s
+      retries: 40
+    networks: [microsvcs]
+
+  chat-mongodb:
+    image: mongo:7
+    volumes: [peer-chat-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    networks: [microsvcs]
+
+  media-mongodb:
+    image: mongo:7
+    volumes: [peer-media-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    networks: [microsvcs]
+
+volumes:
+  peer-chat-data:
+  peer-media-data:
+  peer-media-files:
+  peer-polls-data:
+  peer-search-data:
+
+networks:
+  microsvcs:
+    external: false
