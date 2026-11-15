@@ -234,7 +234,7 @@ Mongo conserva summaries-data y RabbitMQ summaries-rabbitmq-data. Vuelve a inici
 | 502 del núcleo o error al crear datos en sus APIs | Revisar su Swagger y sus logs; validar que el núcleo responde antes de probar summaries |
 | El resumen queda `pendiente` | RabbitMQ caído o `messages`/el servicio sin conexión al broker: revisar `published`/`received` en Mongo y los logs; al volver el broker se completa solo |
 | El resumen termina `fallida` | Leer `error`: ventana vacía, cuota del LLM agotada, credencial inválida, etc. |
-| Los `POST` de users/channels/messages del demo devuelven 500 | Es un bug del demo del curso (el dato sí se guarda); obtén los IDs con los GET. Ver README |
+| Los `POST` de users/channels/messages del demo devuelven 500 | Es un bug de versiones anteriores del demo del curso (el dato sí se guarda); obtén los IDs con los GET. El curso ya lo corrigió: ver `docs/REFERENCIA.md`, «Hallazgos sobre el código del curso» |
 | El código de pruebas es distinto de 0 | Revisar la salida de pytest; no tomar el resultado del comando de limpieza como resultado de las pruebas |
 
 Guía principal: [README.md](./README.md). Contexto: [CLAUDE.md](./CLAUDE.md). Contratos: [REFERENCIA.md](./docs/REFERENCIA.md). Esquemas de eventos: [docs/eventos](./docs/eventos/).

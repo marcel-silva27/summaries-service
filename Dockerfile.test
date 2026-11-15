@@ -6,5 +6,6 @@ COPY app ./app
 COPY gateway ./gateway
 COPY web ./web
 COPY tests ./tests
+COPY tests_integration ./tests_integration
 COPY docs ./docs
 CMD ["python", "-m", "pytest", "-q", "tests"]
