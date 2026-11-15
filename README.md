@@ -74,7 +74,17 @@ docker compose -p summaries-tests -f compose.test.yaml up --build --abort-on-con
 docker compose -p summaries-tests -f compose.test.yaml down -v
 ```
 
-**291 pruebas aprobadas**: servicio, gateway, contratos, fallas parciales, búsqueda, encuestas, archivos y eventos compatibles. Las pruebas simulan Gemini y las APIs externas; no gastan cuota.
+**325 pruebas aprobadas** en `tests/`: servicio por endpoint, gateway, contratos, fallas parciales, búsqueda, encuestas, archivos y eventos compatibles. Las pruebas simulan Gemini y las APIs externas; no gastan cuota.
+
+Además, **12 pruebas de integración** (`tests_integration/`) usan los `users`, `channels` y `messages` reales del curso, fijados a un commit, con Gemini simulado:
+
+```bash
+python tools/prepare_peers.py core
+docker compose -p summaries-integration -f compose.integration.yaml up --build --abort-on-container-exit --exit-code-from integration-tests --attach integration-tests
+docker compose -p summaries-integration -f compose.integration.yaml down -v
+```
+
+Qué cubre cada nivel (por endpoint, aislamiento de la BD, contratos e integración) y sus límites: [tests/README.md](tests/README.md).
 
 Video: [demostración de la interfaz](docs/evidencia/demo-interfaz.mp4). La grabación usa las APIs reales de los equipos en un entorno descartable y Gemini simulado. Pasos y límites de la verificación: [INTERFAZ.md](docs/INTERFAZ.md).
 

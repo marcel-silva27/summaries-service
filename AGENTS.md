@@ -9,6 +9,11 @@ El contexto completo del proyecto está en [`CLAUDE.md`](./CLAUDE.md); el contra
 docker compose -p summaries-tests -f compose.test.yaml up --build --abort-on-container-exit --exit-code-from tests --attach tests
 docker compose -p summaries-tests -f compose.test.yaml down -v
 
+# Integración con el chat base real del curso (LLM simulado; ver tests/README.md)
+python tools/prepare_peers.py core
+docker compose -p summaries-integration -f compose.integration.yaml up --build --abort-on-container-exit --exit-code-from integration-tests --attach integration-tests
+docker compose -p summaries-integration -f compose.integration.yaml down -v
+
 # Entorno completo: ver README ("Cómo correrlo"). Requiere el chat base corriendo (crea la red `microsvcs`).
 docker compose up -d --build --wait
 

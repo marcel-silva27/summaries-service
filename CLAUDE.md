@@ -6,7 +6,7 @@ Microservicio vertical para la cátedra de Microservicios (trabajo final). Se co
 
 **Tarea de despliegue:** desplegarlo en el cluster Kubernetes común del curso, sobre el chat base ya desplegado (sin redesplegar ni modificar el core), idealmente con CI, con readiness/liveness y autoscaling, y entregar evidencia del flujo integrado y del escalamiento. Hecho: ver [`docs/DESPLIEGUE.md`](./docs/DESPLIEGUE.md).
 
-Este archivo es el contexto estable del proyecto. Detalle técnico: [`docs/REFERENCIA.md`](./docs/REFERENCIA.md). Cómo ejecutarlo: [`README.md`](./README.md). Qué se verificó: [`docs/VERIFICACION.md`](./docs/VERIFICACION.md). Despliegue y evidencia: [`docs/DESPLIEGUE.md`](./docs/DESPLIEGUE.md). Reglas rápidas para agentes: [`AGENTS.md`](./AGENTS.md).
+Este archivo es el contexto estable del proyecto. Detalle técnico: [`docs/REFERENCIA.md`](./docs/REFERENCIA.md). Cómo ejecutarlo: [`README.md`](./README.md). Qué se prueba y cómo: [`tests/README.md`](./tests/README.md). Despliegue y evidencia: [`docs/DESPLIEGUE.md`](./docs/DESPLIEGUE.md). Reglas rápidas para agentes: [`AGENTS.md`](./AGENTS.md).
 
 ## Qué hace
 
@@ -73,7 +73,7 @@ Piezas (`app/`): `routes/` (REST), `services.py` (solicitudes, ventanas, entrada
 
 ## Hallazgos del curso que afectan al servicio
 
-- **Bug del demo**: sus `POST` de creación responden 500 aunque guardan el dato, y `messages` **nunca publica `chat.message.created`** (no puede serializar el `_id` de Mongo). Por eso el servicio reconcilia el historial con `GET .../messages` en cada ventana; no es un respaldo menor. No se tocó el código del curso; conviene avisar al profesor.
+- **Bug del demo (corregido en el curso)**: versiones anteriores del demo respondían 500 en los `POST` de creación aunque guardaban el dato, y `messages` no publicaba `chat.message.created` (no podía serializar el `_id` de Mongo). El repositorio del curso en `8930ac9` (9 nov 2026) ya usa `insert_one(copia)`: responde 201 y publica el evento, verificado en `tests_integration/`. Otras versiones del núcleo (despliegues antiguos, la de otros equipos) pueden conservar el bug, por eso el servicio sigue reconciliando el historial con `GET .../messages` en cada ventana: no es un respaldo menor. No se tocó el código del curso.
 - `messages` solo publica con `RABBITMQ_URL`, que su compose no define; el exchange `chat` es topic **no durable** y debe declararse igual.
 - `GET .../messages` devuelve todo el canal sin paginar ni filtrar por fecha, y `[]` aunque el canal no exista.
 - El gateway sirve la web en el puerto 8080 y conecta users/channels/messages/summaries/search/media/polls por sus APIs públicas. Los archivos también pasan por el gateway. Las URLs son configurables; otros equipos pueden consumir GraphQL o integrar la API REST de resúmenes. El Compose opcional de equipos fija versiones y evita publicar sus puertos host repetidos. Uso en `gateway/README.md`.
@@ -89,6 +89,8 @@ Piezas (`app/`): `routes/` (REST), `services.py` (solicitudes, ventanas, entrada
 
 - Pruebas (solo Docker; usan Mongo y RabbitMQ reales y simulan el núcleo y Gemini):
   `docker compose -p summaries-tests -f compose.test.yaml up --build --abort-on-container-exit --exit-code-from tests --attach tests`, y luego `down -v`.
+- Integración con el chat base real (`users`, `channels`, `messages` del curso fijados a un commit; LLM simulado):
+  `python tools/prepare_peers.py core`, `docker compose -p summaries-integration -f compose.integration.yaml up --build --abort-on-container-exit --exit-code-from integration-tests --attach integration-tests`, y luego `down -v`. Qué cubre cada nivel de prueba: [`tests/README.md`](./tests/README.md).
 - Si cambia un modelo de evento: `python -m app.tools.export_event_schemas` (una prueba falla si `docs/eventos/` se desincroniza).
 - Si cambia un contrato, el lenguaje ubicuo o la frontera de responsabilidad, actualizar este archivo y `docs/REFERENCIA.md`.
 - Rama estable `main`; el trabajo va en ramas `feature/<nombre>` con PR.
