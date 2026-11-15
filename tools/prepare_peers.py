@@ -1,6 +1,7 @@
 """Descarga versiones fijas de los equipos en .peers, sin editar su código."""
 from pathlib import Path
 import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -10,11 +11,17 @@ SOURCES = {
     "media": ("667r/microservicios", "19f0ef79ecefbb6392b85be2571928e9dcedc0ea",
               ["03_Comunicación/demo/media"]),
     "polls": ("TomasCano-Usm/INF326-Microservicio-Polls", "76df544c42a6e1cc42fab490e1b200523faf0f10", []),
+    # Chat base del curso (users, channels, messages): lo usa compose.integration.yaml.
+    "core": ("rmasad/microservicios", "8930ac9255ff5a5e7574d9546404e76f1ebb62dd", ["03_Comunicación/demo"]),
 }
+PEERS = ("search", "media", "polls")
 
 
 def main():
-    for name, (repo, revision, folders) in SOURCES.items():
+    # Sin argumentos descarga los equipos (compose.peers.yaml); `core` solo se pide por nombre.
+    names = sys.argv[1:] or PEERS
+    for name in names:
+        repo, revision, folders = SOURCES[name]
         target = ROOT / ".peers" / name
         if not (target / ".git").exists():
             subprocess.run(["git", "clone", "--filter=blob:none", "--no-checkout", "--depth", "1",

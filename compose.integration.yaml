@@ -1,0 +1,100 @@
+# Prueba de integración con el chat base REAL (users, channels, messages) del curso.
+# Stack autónomo: red y volúmenes propios, sin puertos al host; Gemini simulado (nunca se llama a la API).
+#   python tools/prepare_peers.py core
+#   docker compose -p summaries-integration -f compose.integration.yaml up --build --abort-on-container-exit --exit-code-from integration-tests --attach integration-tests
+#   docker compose -p summaries-integration -f compose.integration.yaml down -v
+x-api-health: &api-health
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+  interval: 3s
+  timeout: 5s
+  retries: 30
+
+services:
+  integration-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    command: ["python", "-m", "pytest", "-q", "tests_integration"]
+    environment:
+      USERS_URL: http://users:8000
+      CHANNELS_URL: http://channels:8000
+      MESSAGES_URL: http://messages:8000
+      SUMMARIES_URL: http://summaries:8000
+      BROKER_URL: amqp://summaries-rabbitmq:5672
+    depends_on:
+      users: {condition: service_healthy}
+      channels: {condition: service_healthy}
+      messages: {condition: service_healthy}
+      summaries: {condition: service_healthy}
+
+  summaries:
+    build: .
+    environment:
+      MONGODB_URL: mongodb://summaries-mongodb:27017
+      BROKER_URL: amqp://summaries-rabbitmq:5672
+      USERS_URL: http://users:8000
+      CHANNELS_URL: http://channels:8000
+      MESSAGES_URL: http://messages:8000
+      LLM_PROVIDER: mock
+      MESSAGE_THRESHOLD: "3"
+      WORKER_POLL_SECONDS: "1"
+      OUTBOX_POLL_SECONDS: "1"
+    depends_on:
+      summaries-mongodb: {condition: service_healthy}
+      summaries-rabbitmq: {condition: service_healthy}
+      messages: {condition: service_healthy}
+
+  users:
+    build: ./.peers/core/03_Comunicación/demo/users
+    environment:
+      MONGODB_URL: mongodb://core-mongodb:27017
+    depends_on:
+      core-mongodb: {condition: service_healthy}
+    healthcheck: *api-health
+
+  channels:
+    build: ./.peers/core/03_Comunicación/demo/channels
+    environment:
+      MONGODB_URL: mongodb://core-mongodb:27017
+    depends_on:
+      core-mongodb: {condition: service_healthy}
+    healthcheck: *api-health
+
+  messages:
+    build: ./.peers/core/03_Comunicación/demo/messages
+    environment:
+      MONGODB_URL: mongodb://core-mongodb:27017
+      USERS_URL: http://users:8000
+      CHANNELS_URL: http://channels:8000
+      # Sin esto el núcleo no publica eventos; el exchange `chat` (topic, no durable) lo declara messages.
+      RABBITMQ_URL: amqp://summaries-rabbitmq:5672
+    depends_on:
+      users: {condition: service_healthy}
+      channels: {condition: service_healthy}
+      summaries-rabbitmq: {condition: service_healthy}
+    healthcheck: *api-health
+
+  core-mongodb:
+    image: mongo:7
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  summaries-mongodb:
+    image: mongo:7
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  summaries-rabbitmq:
+    image: rabbitmq:4-management-alpine
+    hostname: summaries-rabbitmq
+    healthcheck:
+      test: ["CMD", "su-exec", "rabbitmq", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
