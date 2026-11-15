@@ -1,0 +1,94 @@
+{
+  "_meta": {
+    "provider": "chat base del curso: users, channels y messages",
+    "source": "https://github.com/rmasad/microservicios @ 8930ac9255ff5a5e7574d9546404e76f1ebb62dd, carpeta 03_Comunicación/demo",
+    "captured": "2026-11-15",
+    "how": "Respuestas reales de los servicios (compose.integration.yaml) con los IDs reemplazados por valores fijos. tests_integration/test_core_contract.py las verifica contra el núcleo real: si el núcleo cambia, esa prueba falla.",
+    "ids": {
+      "user": "11111111-1111-4111-8111-111111111111",
+      "channel": "22222222-2222-4222-8222-222222222222",
+      "message": "33333333-3333-4333-8333-333333333333",
+      "unknown": "99999999-9999-4999-8999-999999999999"
+    }
+  },
+  "interactions": {
+    "get_user": {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/users/11111111-1111-4111-8111-111111111111"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "display_name": "Ana"
+        }
+      }
+    },
+    "get_user_not_found": {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/users/99999999-9999-4999-8999-999999999999"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "detail": "User not found"
+        }
+      }
+    },
+    "get_channel": {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/channels/22222222-2222-4222-8222-222222222222"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "name": "General"
+        }
+      }
+    },
+    "get_channel_not_found": {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/channels/99999999-9999-4999-8999-999999999999"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "detail": "Channel not found"
+        }
+      }
+    },
+    "list_messages": {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/channels/22222222-2222-4222-8222-222222222222/messages"
+      },
+      "response": {
+        "status": 200,
+        "body": [
+          {
+            "id": "33333333-3333-4333-8333-333333333333",
+            "channel_id": "22222222-2222-4222-8222-222222222222",
+            "created_at": "2026-11-15T18:34:36.246031+00:00",
+            "author_id": "11111111-1111-4111-8111-111111111111",
+            "content": "Decidimos lanzar el viernes"
+          }
+        ]
+      }
+    },
+    "list_messages_unknown_channel": {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/channels/99999999-9999-4999-8999-999999999999/messages"
+      },
+      "response": {
+        "status": 200,
+        "body": []
+      }
+    }
+  }
+}
